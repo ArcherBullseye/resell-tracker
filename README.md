@@ -1,6 +1,6 @@
 # Resell Tracker
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/djkcrypto/resell-tracker/releases)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/ArcherBullseye/resell-tracker/releases)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Umbrel](https://img.shields.io/badge/Umbrel-Compatible-purple)](https://umbrel.com)
 
@@ -31,7 +31,7 @@ A self-hosted retail arbitrage tracker that runs on your **Umbrel home server**.
 Add this repo as a community app store source in your Umbrel dashboard:
 
 1. Go to **App Store** → **Community App Stores**
-2. Add: `https://github.com/djkcrypto/resell-tracker`
+2. Add: `https://github.com/ArcherBullseye/resell-tracker`
 3. Install **Resell Tracker**
 4. Set your API keys in the app settings (see [API Keys](#api-keys))
 
@@ -42,7 +42,7 @@ Add this repo as a community app store source in your Umbrel dashboard:
 ssh umbrel@umbrel.local
 
 # Clone the repo
-git clone https://github.com/djkcrypto/resell-tracker ~/umbrel/app-data/resell-tracker
+git clone https://github.com/ArcherBullseye/resell-tracker ~/umbrel/app-data/resell-tracker
 cd ~/umbrel/app-data/resell-tracker
 
 # Create your env file
@@ -60,7 +60,7 @@ Then visit `http://umbrel.local:3000`
 ## Running Locally (non-Umbrel)
 
 ```bash
-git clone https://github.com/djkcrypto/resell-tracker
+git clone https://github.com/ArcherBullseye/resell-tracker
 cd resell-tracker
 cp .env.example .env
 # Edit .env and add your API keys

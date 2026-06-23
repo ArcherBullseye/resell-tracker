@@ -2,7 +2,7 @@ manifestVersion: 1.1
 id: resell-tracker
 name: Resell Tracker
 tagline: Track retail arbitrage buys, sells, and profits
-icon: https://raw.githubusercontent.com/djkcrypto/resell-tracker/main/umbrel-app-icon.jpg
+icon: https://raw.githubusercontent.com/ArcherBullseye/resell-tracker/main/umbrel-app-icon.jpg
 category: finance
 version: "1.0.0"
 port: 3000
@@ -37,12 +37,12 @@ description: >-
 
   • UPC Item DB key (optional, free tier included) — for barcode lookup
 
-developer: djkcrypto
-website: https://github.com/djkcrypto/resell-tracker
-submitter: djkcrypto
-submission: https://github.com/djkcrypto/resell-tracker
-repo: https://github.com/djkcrypto/resell-tracker
-support: https://github.com/djkcrypto/resell-tracker/issues
+developer: ArcherBullseye
+website: https://github.com/ArcherBullseye/resell-tracker
+submitter: ArcherBullseye
+submission: https://github.com/ArcherBullseye/resell-tracker
+repo: https://github.com/ArcherBullseye/resell-tracker
+support: https://github.com/ArcherBullseye/resell-tracker/issues
 gallery: []
 releaseNotes: >-
   Initial release — full buy/sell tracking, barcode lookup, eBay price data, and profit dashboard.
