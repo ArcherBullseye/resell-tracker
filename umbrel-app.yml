@@ -1,0 +1,52 @@
+manifestVersion: 1.1
+id: resell-tracker
+name: Resell Tracker
+tagline: Track retail arbitrage buys, sells, and profits
+icon: https://raw.githubusercontent.com/djkcrypto/resell-tracker/main/umbrel-app-icon.jpg
+category: finance
+version: "1.0.0"
+port: 3000
+description: >-
+  Resell Tracker is a retail arbitrage management app that runs entirely on your Umbrel home server.
+
+
+  Features:
+
+  • Barcode / UPC lookup to auto-fill product name and image
+
+  • eBay sold listings price data (low, average, high) with recent sales
+
+  • Record buy price and buy date for every item
+
+  • Record sell price, sell date, shipping cost, and selling platform
+
+  • Platform fee calculation for eBay, Mercari, Poshmark, Facebook Marketplace, and more
+
+  • Live net profit preview before saving
+
+  • Dashboard with total invested, total revenue, and net profit across all sales
+
+  • Filter by In Inventory vs. Sold
+
+  • All data stored locally in SQLite — no cloud required
+
+
+  API keys required for full functionality (see README):
+
+  • eBay Developer App ID (free) — for sold listing price data
+
+  • UPC Item DB key (optional, free tier included) — for barcode lookup
+
+developer: djkcrypto
+website: https://github.com/djkcrypto/resell-tracker
+submitter: djkcrypto
+submission: https://github.com/djkcrypto/resell-tracker
+repo: https://github.com/djkcrypto/resell-tracker
+support: https://github.com/djkcrypto/resell-tracker/issues
+gallery: []
+releaseNotes: >-
+  Initial release — full buy/sell tracking, barcode lookup, eBay price data, and profit dashboard.
+dependencies: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
