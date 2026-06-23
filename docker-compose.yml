@@ -6,8 +6,11 @@ services:
     network_mode: host
     volumes:
       - ${APP_DATA_DIR:-./data}:/app/data
-    env_file:
-      - .env
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data
+      - EBAY_APP_ID=${EBAY_APP_ID:-}
+      - UPC_API_KEY=${UPC_API_KEY:-}
     restart: unless-stopped
     labels:
       - "umbrel.app-id=resell-tracker"
