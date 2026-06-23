@@ -13,35 +13,69 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'resell.db'));
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    barcode TEXT,
-    name TEXT NOT NULL,
-    description TEXT,
-    image_url TEXT,
-    category TEXT,
-    buy_price REAL,
-    buy_date TEXT,
-    sell_price REAL,
-    sell_date TEXT,
-    shipping_cost REAL DEFAULT 0,
+// WAL mode: better crash safety and concurrent reads
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// ── Migrations ───────────────────────────────────────────────────────────────
+// To add new columns or tables in the future: append a new entry to MIGRATIONS.
+// Never edit or reorder existing entries — each runs exactly once.
+
+const MIGRATIONS = [
+  // v1 — initial schema
+  `CREATE TABLE IF NOT EXISTS items (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    barcode          TEXT,
+    name             TEXT NOT NULL,
+    description      TEXT,
+    image_url        TEXT,
+    category         TEXT,
+    buy_price        REAL,
+    buy_date         TEXT,
+    sell_price       REAL,
+    sell_date        TEXT,
+    shipping_cost    REAL DEFAULT 0,
     selling_platform TEXT,
     platform_fee_pct REAL DEFAULT 0,
-    ebay_avg_price REAL,
-    ebay_low_price REAL,
-    ebay_high_price REAL,
-    status TEXT DEFAULT 'inventory',
-    notes TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+    ebay_avg_price   REAL,
+    ebay_low_price   REAL,
+    ebay_high_price  REAL,
+    status           TEXT DEFAULT 'inventory',
+    notes            TEXT,
+    created_at       TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TEXT DEFAULT CURRENT_TIMESTAMP
+  )`,
+];
+
+function runMigrations() {
+  db.exec(`CREATE TABLE IF NOT EXISTS _schema_version (
+    version INTEGER PRIMARY KEY,
+    applied TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  const applied = new Set(
+    db.prepare('SELECT version FROM _schema_version').all().map(r => r.version)
+  );
+  const insert = db.prepare('INSERT INTO _schema_version (version) VALUES (?)');
+
+  db.transaction(() => {
+    MIGRATIONS.forEach((sql, idx) => {
+      const v = idx + 1;
+      if (!applied.has(v)) {
+        db.exec(sql);
+        insert.run(v);
+        console.log(`Migration v${v} applied`);
+      }
+    });
+  })();
+}
+
+runMigrations();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Items CRUD ──────────────────────────────────────────────────────────────
+// ── Items CRUD ───────────────────────────────────────────────────────────────
 
 app.get('/api/items', (req, res) => {
   const { status } = req.query;
@@ -68,7 +102,7 @@ app.post('/api/items', (req, res) => {
 
   if (!name) return res.status(400).json({ error: 'Name is required' });
 
-  const stmt = db.prepare(`
+  const result = db.prepare(`
     INSERT INTO items (
       barcode, name, description, image_url, category,
       buy_price, buy_date, sell_price, sell_date,
@@ -82,19 +116,24 @@ app.post('/api/items', (req, res) => {
       @ebay_avg_price, @ebay_low_price, @ebay_high_price,
       @status, @notes
     )
-  `);
-
-  const result = stmt.run({
+  `).run({
     barcode: barcode || null,
-    name, description: description || null, image_url: image_url || null,
-    category: category || null, buy_price: buy_price || null,
-    buy_date: buy_date || null, sell_price: sell_price || null,
-    sell_date: sell_date || null, shipping_cost: shipping_cost || 0,
+    name,
+    description: description || null,
+    image_url: image_url || null,
+    category: category || null,
+    buy_price: buy_price || null,
+    buy_date: buy_date || null,
+    sell_price: sell_price || null,
+    sell_date: sell_date || null,
+    shipping_cost: shipping_cost || 0,
     selling_platform: selling_platform || null,
     platform_fee_pct: platform_fee_pct || 0,
-    ebay_avg_price: ebay_avg_price || null, ebay_low_price: ebay_low_price || null,
+    ebay_avg_price: ebay_avg_price || null,
+    ebay_low_price: ebay_low_price || null,
     ebay_high_price: ebay_high_price || null,
-    status: status || 'inventory', notes: notes || null
+    status: status || 'inventory',
+    notes: notes || null
   });
 
   res.status(201).json({ id: result.lastInsertRowid });
@@ -127,15 +166,23 @@ app.put('/api/items/:id', (req, res) => {
     WHERE id = @id
   `).run({
     id: req.params.id,
-    barcode: barcode || null, name, description: description || null,
-    image_url: image_url || null, category: category || null,
-    buy_price: buy_price || null, buy_date: buy_date || null,
-    sell_price: sell_price || null, sell_date: sell_date || null,
-    shipping_cost: shipping_cost || 0, selling_platform: selling_platform || null,
+    barcode: barcode || null,
+    name,
+    description: description || null,
+    image_url: image_url || null,
+    category: category || null,
+    buy_price: buy_price || null,
+    buy_date: buy_date || null,
+    sell_price: sell_price || null,
+    sell_date: sell_date || null,
+    shipping_cost: shipping_cost || 0,
+    selling_platform: selling_platform || null,
     platform_fee_pct: platform_fee_pct || 0,
-    ebay_avg_price: ebay_avg_price || null, ebay_low_price: ebay_low_price || null,
+    ebay_avg_price: ebay_avg_price || null,
+    ebay_low_price: ebay_low_price || null,
     ebay_high_price: ebay_high_price || null,
-    status: status || 'inventory', notes: notes || null
+    status: status || 'inventory',
+    notes: notes || null
   });
 
   res.json({ success: true });
@@ -151,22 +198,29 @@ app.delete('/api/items/:id', (req, res) => {
 // ── Dashboard stats ──────────────────────────────────────────────────────────
 
 app.get('/api/stats', (req, res) => {
-  const total = db.prepare('SELECT COUNT(*) as count FROM items').get().count;
-  const inventory = db.prepare("SELECT COUNT(*) as count FROM items WHERE status = 'inventory'").get().count;
-  const sold = db.prepare("SELECT COUNT(*) as count FROM items WHERE status = 'sold'").get().count;
-  const totalInvested = db.prepare('SELECT COALESCE(SUM(buy_price),0) as sum FROM items').get().sum;
-  const totalRevenue = db.prepare("SELECT COALESCE(SUM(sell_price),0) as sum FROM items WHERE status='sold'").get().sum;
-  const totalShipping = db.prepare("SELECT COALESCE(SUM(shipping_cost),0) as sum FROM items WHERE status='sold'").get().sum;
-  const totalFees = db.prepare(`
-    SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100), 0) as sum
-    FROM items WHERE status='sold'
-  `).get().sum;
+  const total     = db.prepare('SELECT COUNT(*) as c FROM items').get().c;
+  const inventory = db.prepare("SELECT COUNT(*) as c FROM items WHERE status='inventory'").get().c;
+  const sold      = db.prepare("SELECT COUNT(*) as c FROM items WHERE status='sold'").get().c;
 
-  const soldItems = db.prepare("SELECT buy_price FROM items WHERE status='sold'").all();
-  const costOfSoldItems = soldItems.reduce((a, i) => a + (i.buy_price || 0), 0);
-  const netProfit = totalRevenue - costOfSoldItems - totalShipping - totalFees;
+  const totalInvested = db.prepare('SELECT COALESCE(SUM(buy_price),0) as s FROM items').get().s;
+  const totalRevenue  = db.prepare("SELECT COALESCE(SUM(sell_price),0) as s FROM items WHERE status='sold'").get().s;
+  const totalShipping = db.prepare("SELECT COALESCE(SUM(shipping_cost),0) as s FROM items WHERE status='sold'").get().s;
+  const totalFees     = db.prepare(
+    "SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100), 0) as s FROM items WHERE status='sold'"
+  ).get().s;
+  const costOfSold    = db.prepare("SELECT COALESCE(SUM(buy_price),0) as s FROM items WHERE status='sold'").get().s;
+
+  const netProfit = totalRevenue - costOfSold - totalShipping - totalFees;
 
   res.json({ total, inventory, sold, totalInvested, totalRevenue, netProfit, totalShipping, totalFees });
+});
+
+// ── Schema info ──────────────────────────────────────────────────────────────
+
+app.get('/api/schema', (req, res) => {
+  const versions = db.prepare('SELECT * FROM _schema_version ORDER BY version').all();
+  const columns  = db.prepare('PRAGMA table_info(items)').all();
+  res.json({ migrations_applied: versions.length, versions, columns });
 });
 
 // ── External API proxies ─────────────────────────────────────────────────────
@@ -180,15 +234,12 @@ app.get('/api/lookup/barcode', async (req, res) => {
     const base = apiKey
       ? 'https://api.upcitemdb.com/prod/v1/lookup'
       : 'https://api.upcitemdb.com/prod/trial/lookup';
-    const url = `${base}?upc=${encodeURIComponent(upc)}`;
     const headers = apiKey ? { 'user_key': apiKey } : {};
 
-    const response = await fetch(url, { headers });
+    const response = await fetch(`${base}?upc=${encodeURIComponent(upc)}`, { headers });
     const data = await response.json();
 
-    if (!data.items || data.items.length === 0) {
-      return res.json({ found: false });
-    }
+    if (!data.items || data.items.length === 0) return res.json({ found: false });
 
     const item = data.items[0];
     res.json({
@@ -210,7 +261,7 @@ app.get('/api/lookup/ebay', async (req, res) => {
   const appId = process.env.EBAY_APP_ID;
 
   if (!appId) return res.status(400).json({ error: 'EBAY_APP_ID not configured' });
-  if (!q) return res.status(400).json({ error: 'q required' });
+  if (!q)     return res.status(400).json({ error: 'q required' });
 
   try {
     const params = new URLSearchParams({
@@ -226,32 +277,31 @@ app.get('/api/lookup/ebay', async (req, res) => {
       'paginationInput.entriesPerPage': '20'
     });
 
-    const url = `https://svcs.ebay.com/services/search/FindingService/v1?${params}`;
-    const response = await fetch(url);
+    const response = await fetch(
+      `https://svcs.ebay.com/services/search/FindingService/v1?${params}`
+    );
     const data = await response.json();
 
-    const searchResult = data?.findCompletedItemsResponse?.[0]?.searchResult?.[0];
-    const items = searchResult?.item || [];
-
+    const items = data?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];
     if (items.length === 0) return res.json({ found: false, count: 0 });
 
     const prices = items
       .map(i => parseFloat(i.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'] || 0))
       .filter(p => p > 0);
 
-    const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
-    const low = Math.min(...prices);
+    const avg  = prices.reduce((a, b) => a + b, 0) / prices.length;
+    const low  = Math.min(...prices);
     const high = Math.max(...prices);
 
     res.json({
       found: true,
       count: prices.length,
-      avg: +avg.toFixed(2),
-      low: +low.toFixed(2),
+      avg:  +avg.toFixed(2),
+      low:  +low.toFixed(2),
       high: +high.toFixed(2),
       recentSales: items.slice(0, 5).map(i => ({
-        title: i.title?.[0],
-        price: parseFloat(i.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'] || 0),
+        title:   i.title?.[0],
+        price:   parseFloat(i.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'] || 0),
         endTime: i.listingInfo?.[0]?.endTime?.[0],
         itemUrl: i.viewItemURL?.[0]
       }))
