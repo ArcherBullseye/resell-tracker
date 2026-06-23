@@ -13,16 +13,14 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(path.join(DATA_DIR, 'resell.db'));
 
-// WAL mode: better crash safety and concurrent reads
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 // ── Migrations ───────────────────────────────────────────────────────────────
-// To add new columns or tables in the future: append a new entry to MIGRATIONS.
-// Never edit or reorder existing entries — each runs exactly once.
+// Append new entries to add columns/tables. Never edit or reorder existing ones.
 
 const MIGRATIONS = [
-  // v1 — initial schema
+  // v1 — initial items table
   `CREATE TABLE IF NOT EXISTS items (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     barcode          TEXT,
@@ -44,6 +42,13 @@ const MIGRATIONS = [
     notes            TEXT,
     created_at       TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at       TEXT DEFAULT CURRENT_TIMESTAMP
+  )`,
+
+  // v2 — settings table for API keys configured via the UI
+  `CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`,
 ];
 
@@ -72,8 +77,54 @@ function runMigrations() {
 
 runMigrations();
 
+// DB setting takes priority over env var, env var is the fallback.
+function getSetting(key) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return (row && row.value) || process.env[key] || '';
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+app.get('/api/settings', (req, res) => {
+  const keys = ['EBAY_APP_ID', 'UPC_API_KEY'];
+  const result = {};
+  for (const key of keys) {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    const val = (row && row.value) || '';
+    // Mask everything except last 4 chars so the UI can show "configured" state
+    result[key] = val
+      ? { configured: true, preview: val.slice(-4).padStart(val.length, '•') }
+      : { configured: false, preview: '' };
+  }
+  res.json(result);
+});
+
+app.post('/api/settings', (req, res) => {
+  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY'];
+  const upsert = db.prepare(`
+    INSERT INTO settings (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `);
+
+  db.transaction(() => {
+    for (const key of allowed) {
+      if (key in req.body) {
+        const val = (req.body[key] || '').trim();
+        if (val === '') {
+          db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+        } else {
+          upsert.run(key, val);
+        }
+      }
+    }
+  })();
+
+  res.json({ success: true });
+});
 
 // ── Items CRUD ───────────────────────────────────────────────────────────────
 
@@ -117,23 +168,15 @@ app.post('/api/items', (req, res) => {
       @status, @notes
     )
   `).run({
-    barcode: barcode || null,
-    name,
-    description: description || null,
-    image_url: image_url || null,
-    category: category || null,
-    buy_price: buy_price || null,
-    buy_date: buy_date || null,
-    sell_price: sell_price || null,
-    sell_date: sell_date || null,
-    shipping_cost: shipping_cost || 0,
-    selling_platform: selling_platform || null,
-    platform_fee_pct: platform_fee_pct || 0,
-    ebay_avg_price: ebay_avg_price || null,
-    ebay_low_price: ebay_low_price || null,
+    barcode: barcode || null, name,
+    description: description || null, image_url: image_url || null,
+    category: category || null, buy_price: buy_price || null,
+    buy_date: buy_date || null, sell_price: sell_price || null,
+    sell_date: sell_date || null, shipping_cost: shipping_cost || 0,
+    selling_platform: selling_platform || null, platform_fee_pct: platform_fee_pct || 0,
+    ebay_avg_price: ebay_avg_price || null, ebay_low_price: ebay_low_price || null,
     ebay_high_price: ebay_high_price || null,
-    status: status || 'inventory',
-    notes: notes || null
+    status: status || 'inventory', notes: notes || null
   });
 
   res.status(201).json({ id: result.lastInsertRowid });
@@ -166,23 +209,15 @@ app.put('/api/items/:id', (req, res) => {
     WHERE id = @id
   `).run({
     id: req.params.id,
-    barcode: barcode || null,
-    name,
-    description: description || null,
-    image_url: image_url || null,
-    category: category || null,
-    buy_price: buy_price || null,
-    buy_date: buy_date || null,
-    sell_price: sell_price || null,
-    sell_date: sell_date || null,
-    shipping_cost: shipping_cost || 0,
-    selling_platform: selling_platform || null,
+    barcode: barcode || null, name, description: description || null,
+    image_url: image_url || null, category: category || null,
+    buy_price: buy_price || null, buy_date: buy_date || null,
+    sell_price: sell_price || null, sell_date: sell_date || null,
+    shipping_cost: shipping_cost || 0, selling_platform: selling_platform || null,
     platform_fee_pct: platform_fee_pct || 0,
-    ebay_avg_price: ebay_avg_price || null,
-    ebay_low_price: ebay_low_price || null,
+    ebay_avg_price: ebay_avg_price || null, ebay_low_price: ebay_low_price || null,
     ebay_high_price: ebay_high_price || null,
-    status: status || 'inventory',
-    notes: notes || null
+    status: status || 'inventory', notes: notes || null
   });
 
   res.json({ success: true });
@@ -208,11 +243,13 @@ app.get('/api/stats', (req, res) => {
   const totalFees     = db.prepare(
     "SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100), 0) as s FROM items WHERE status='sold'"
   ).get().s;
-  const costOfSold    = db.prepare("SELECT COALESCE(SUM(buy_price),0) as s FROM items WHERE status='sold'").get().s;
+  const costOfSold = db.prepare("SELECT COALESCE(SUM(buy_price),0) as s FROM items WHERE status='sold'").get().s;
 
-  const netProfit = totalRevenue - costOfSold - totalShipping - totalFees;
-
-  res.json({ total, inventory, sold, totalInvested, totalRevenue, netProfit, totalShipping, totalFees });
+  res.json({
+    total, inventory, sold, totalInvested, totalRevenue,
+    netProfit: totalRevenue - costOfSold - totalShipping - totalFees,
+    totalShipping, totalFees
+  });
 });
 
 // ── Schema info ──────────────────────────────────────────────────────────────
@@ -230,7 +267,7 @@ app.get('/api/lookup/barcode', async (req, res) => {
   if (!upc) return res.status(400).json({ error: 'upc required' });
 
   try {
-    const apiKey = process.env.UPC_API_KEY;
+    const apiKey = getSetting('UPC_API_KEY');
     const base = apiKey
       ? 'https://api.upcitemdb.com/prod/v1/lookup'
       : 'https://api.upcitemdb.com/prod/trial/lookup';
@@ -244,12 +281,9 @@ app.get('/api/lookup/barcode', async (req, res) => {
     const item = data.items[0];
     res.json({
       found: true,
-      name: item.title,
-      description: item.description,
-      brand: item.brand,
-      category: item.category,
-      image_url: item.images?.[0] || null,
-      images: item.images || []
+      name: item.title, description: item.description,
+      brand: item.brand, category: item.category,
+      image_url: item.images?.[0] || null, images: item.images || []
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -258,9 +292,9 @@ app.get('/api/lookup/barcode', async (req, res) => {
 
 app.get('/api/lookup/ebay', async (req, res) => {
   const { q } = req.query;
-  const appId = process.env.EBAY_APP_ID;
+  const appId = getSetting('EBAY_APP_ID');
 
-  if (!appId) return res.status(400).json({ error: 'EBAY_APP_ID not configured' });
+  if (!appId) return res.status(400).json({ error: 'eBay App ID not configured — add it in Settings.' });
   if (!q)     return res.status(400).json({ error: 'q required' });
 
   try {
@@ -277,9 +311,7 @@ app.get('/api/lookup/ebay', async (req, res) => {
       'paginationInput.entriesPerPage': '20'
     });
 
-    const response = await fetch(
-      `https://svcs.ebay.com/services/search/FindingService/v1?${params}`
-    );
+    const response = await fetch(`https://svcs.ebay.com/services/search/FindingService/v1?${params}`);
     const data = await response.json();
 
     const items = data?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item || [];
@@ -290,15 +322,10 @@ app.get('/api/lookup/ebay', async (req, res) => {
       .filter(p => p > 0);
 
     const avg  = prices.reduce((a, b) => a + b, 0) / prices.length;
-    const low  = Math.min(...prices);
-    const high = Math.max(...prices);
 
     res.json({
-      found: true,
-      count: prices.length,
-      avg:  +avg.toFixed(2),
-      low:  +low.toFixed(2),
-      high: +high.toFixed(2),
+      found: true, count: prices.length,
+      avg: +avg.toFixed(2), low: +Math.min(...prices).toFixed(2), high: +Math.max(...prices).toFixed(2),
       recentSales: items.slice(0, 5).map(i => ({
         title:   i.title?.[0],
         price:   parseFloat(i.sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'] || 0),
@@ -312,5 +339,5 @@ app.get('/api/lookup/ebay', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker running on port ${PORT}`);
+  console.log(`Resell Tracker v1.1.0 running on port ${PORT}`);
 });

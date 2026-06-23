@@ -414,3 +414,75 @@ function toast(msg, type = '') {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3000);
 }
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+async function openSettings() {
+  const data = await api('/api/settings');
+
+  const ebayInput = document.getElementById('setting-ebay-app-id');
+  const upcInput  = document.getElementById('setting-upc-key');
+
+  // Show masked preview if already configured, clear placeholder so user
+  // knows to retype if they want to change it
+  if (data.EBAY_APP_ID.configured) {
+    ebayInput.placeholder = data.EBAY_APP_ID.preview;
+    ebayInput.value = '';
+    document.getElementById('ebay-status').innerHTML =
+      '<span class="key-ok">&#10003; Configured</span>';
+  } else {
+    ebayInput.placeholder = 'YourApp-YourKey-here…';
+    ebayInput.value = '';
+    document.getElementById('ebay-status').innerHTML =
+      '<span class="key-missing">&#9675; Not set &mdash; eBay price lookup disabled</span>';
+  }
+
+  if (data.UPC_API_KEY.configured) {
+    upcInput.placeholder = data.UPC_API_KEY.preview;
+    upcInput.value = '';
+    document.getElementById('upc-status').innerHTML =
+      '<span class="key-ok">&#10003; Configured (paid tier)</span>';
+  } else {
+    upcInput.placeholder = 'Leave blank to use free tier';
+    upcInput.value = '';
+    document.getElementById('upc-status').innerHTML =
+      '<span class="key-ok">&#10003; Using free tier (100 lookups/day)</span>';
+  }
+
+  document.getElementById('settings-modal').style.display = 'flex';
+}
+
+function closeSettings() {
+  document.getElementById('settings-modal').style.display = 'none';
+}
+
+async function saveSettings() {
+  const ebayVal = document.getElementById('setting-ebay-app-id').value.trim();
+  const upcVal  = document.getElementById('setting-upc-key').value.trim();
+
+  const body = {};
+  // Only send a key if the user typed something — blank means "leave unchanged"
+  // unless they explicitly want to clear it (which they can do by typing a space, then saving)
+  if (ebayVal !== '') body.EBAY_APP_ID = ebayVal;
+  if (upcVal  !== '') body.UPC_API_KEY  = upcVal;
+
+  if (Object.keys(body).length === 0) {
+    closeSettings();
+    return;
+  }
+
+  await api('/api/settings', 'POST', body);
+  closeSettings();
+  toast('Settings saved', 'success');
+}
+
+function toggleKeyVis(inputId, btn) {
+  const el = document.getElementById(inputId);
+  if (el.type === 'password') {
+    el.type = 'text';
+    btn.textContent = '\u{1F648}'; // eyes covered
+  } else {
+    el.type = 'password';
+    btn.textContent = '\u{1F441}'; // eye
+  }
+}
