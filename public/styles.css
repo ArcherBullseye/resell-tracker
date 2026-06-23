@@ -74,6 +74,8 @@ header {
 .btn-ghost:hover { color: var(--text); }
 .btn-danger { background: var(--red); color: #fff; }
 .btn-danger:hover { background: #dc2626; }
+.btn-sell { background: var(--green); color: #000; font-weight: 600; }
+.btn-sell:hover { background: #16a34a; color: #fff; }
 .btn-close { background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; padding: 4px 8px; border-radius: 4px; }
 .btn-close:hover { color: var(--text); background: var(--surface2); }
 .lookup-btn { align-self: flex-end; margin-bottom: 0; }
@@ -520,6 +522,7 @@ textarea { resize: vertical; }
 .settings-help a:hover { text-decoration: underline; }
 
 .optional { font-size: 11px; color: var(--text-dim); font-weight: 400; }
+.field-hint { font-size: 11px; color: var(--text-dim); font-weight: 400; }
 
 .key-row {
   display: flex;

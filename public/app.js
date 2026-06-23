@@ -1,5 +1,6 @@
 let currentTab = 'all';
 let deleteTargetId = null;
+let modalDeleteId = null;
 
 const PLATFORM_FEES = {
   'eBay': 13.25, 'Mercari': 3, 'Facebook Marketplace': 0,
@@ -17,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   ['sell-price', 'buy-price', 'shipping-cost'].forEach(id => {
     document.getElementById(id).addEventListener('input', updateProfitPreview);
   });
+  document.getElementById('item-quantity').addEventListener('input', updateProfitPreview);
 
   // Set today as default buy date
   document.getElementById('buy-date').value = today();
@@ -66,7 +68,11 @@ function renderCard(item) {
     : `<div class="item-card-img-placeholder">📦</div>`;
 
   const badgeClass = item.status === 'sold' ? 'badge-sold' : 'badge-inventory';
-  const badgeText = item.status === 'sold' ? 'Sold' : 'Inventory';
+  const qty = item.quantity || 1;
+  const qtySold = item.quantity_sold || 0;
+  const badgeText = item.status === 'sold'
+    ? (qty > 1 ? `Sold (${qty})` : 'Sold')
+    : (qty > 1 ? `${qty - qtySold} of ${qty} left` : 'Inventory');
 
   let profitHtml = '';
   if (item.sell_price && item.buy_price) {
@@ -119,7 +125,7 @@ function renderCard(item) {
         ${platformHtml}
         <div class="item-actions">
           <button class="btn btn-secondary" onclick="openModal('edit', ${item.id})">Edit</button>
-          <button class="btn btn-ghost" onclick="openDeleteModal(${item.id}, '${esc(item.name)}')">Delete</button>
+          ${item.status !== 'sold' ? `<button class="btn btn-sell" onclick="openSellModal(${item.id}, '${esc(item.name)}', ${item.buy_price || 0})">Sell</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -140,9 +146,14 @@ function openModal(mode, id) {
   document.getElementById('modal-title').textContent = mode === 'edit' ? 'Edit Item' : 'Add Item';
   document.getElementById('lookup-section').style.display = mode === 'add' ? 'block' : 'none';
 
+  const deleteBtn = document.getElementById('modal-delete-btn');
   if (mode === 'edit' && id) {
+    modalDeleteId = id;
+    deleteBtn.style.display = 'inline-flex';
     loadItemIntoForm(id);
   } else {
+    modalDeleteId = null;
+    deleteBtn.style.display = 'none';
     document.getElementById('buy-date').value = today();
   }
 
@@ -158,6 +169,7 @@ async function loadItemIntoForm(id) {
   document.getElementById('item-image').value = item.image_url || '';
   document.getElementById('item-notes').value = item.notes || '';
   document.getElementById('buy-price').value = item.buy_price || '';
+  document.getElementById('item-quantity').value = item.quantity || 1;
   document.getElementById('buy-date').value = item.buy_date || '';
   document.getElementById('sell-price').value = item.sell_price || '';
   document.getElementById('sell-date').value = item.sell_date || '';
@@ -197,13 +209,15 @@ function closeOnBackdrop(e) {
 function clearForm() {
   ['barcode','item-name','item-category','item-image','item-notes',
    'buy-price','buy-date','sell-price','sell-date','shipping-cost',
-   'item-id','ebay-avg-val','ebay-low-val','ebay-high-val','search-name'].forEach(id => {
+   'item-id','ebay-avg-val','ebay-low-val','ebay-high-val','search-name',
+   'item-quantity'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
   document.getElementById('platform-fee-pct').value = 0;
   document.getElementById('item-status').value = 'inventory';
   document.getElementById('status-select').value = 'inventory';
+  document.getElementById('item-quantity').value = 1;
   document.getElementById('selling-platform').value = '';
   document.getElementById('ebay-section').style.display = 'none';
   document.getElementById('profit-preview').style.display = 'none';
@@ -344,7 +358,8 @@ async function saveItem() {
     ebay_avg_price: parseFloat(document.getElementById('ebay-avg-val').value) || null,
     ebay_low_price: parseFloat(document.getElementById('ebay-low-val').value) || null,
     ebay_high_price: parseFloat(document.getElementById('ebay-high-val').value) || null,
-    status: document.getElementById('item-status').value
+    status: document.getElementById('item-status').value,
+    quantity: parseInt(document.getElementById('item-quantity').value) || 1
   };
 
   if (id) {
@@ -360,11 +375,78 @@ async function saveItem() {
   loadItems();
 }
 
+// ── Quick Sell ────────────────────────────────────────────────────────────────
+
+function openSellModal(id, name, buyPrice) {
+  document.getElementById('qs-item-id').value = id;
+  document.getElementById('qs-buy-price').value = buyPrice;
+  document.getElementById('qs-fee-pct').value = 0;
+  document.getElementById('qs-sell-price').value = '';
+  document.getElementById('qs-sell-date').value = today();
+  document.getElementById('qs-shipping').value = '';
+  document.getElementById('qs-platform').value = '';
+  document.getElementById('qs-profit-preview').style.display = 'none';
+  document.getElementById('sell-modal-subtitle').textContent = name;
+  document.getElementById('sell-modal').style.display = 'flex';
+}
+
+function updateQsPlatformFee() {
+  const sel = document.getElementById('qs-platform');
+  const opt = sel.options[sel.selectedIndex];
+  document.getElementById('qs-fee-pct').value = opt.dataset.fee || 0;
+  updateQsPreview();
+}
+
+function updateQsPreview() {
+  const sell = parseFloat(document.getElementById('qs-sell-price').value) || 0;
+  const buy  = parseFloat(document.getElementById('qs-buy-price').value) || 0;
+  const ship = parseFloat(document.getElementById('qs-shipping').value) || 0;
+  const feePct = parseFloat(document.getElementById('qs-fee-pct').value) || 0;
+  const fee  = sell * feePct / 100;
+  const profit = sell - buy - ship - fee;
+
+  const preview = document.getElementById('qs-profit-preview');
+  if (sell > 0 || buy > 0) {
+    preview.style.display = 'flex';
+    document.getElementById('qs-calc-revenue').textContent = fmt(sell);
+    document.getElementById('qs-calc-cost').textContent = '−' + fmt(buy);
+    document.getElementById('qs-calc-shipping').textContent = '−' + fmt(ship);
+    document.getElementById('qs-calc-fee').textContent = '−' + fmt(fee);
+    const profitEl = document.getElementById('qs-calc-profit');
+    profitEl.textContent = fmt(profit);
+    profitEl.className = profit >= 0 ? 'profit-pos' : 'profit-neg';
+  } else {
+    preview.style.display = 'none';
+  }
+}
+
+async function confirmQuickSell() {
+  const id = document.getElementById('qs-item-id').value;
+  if (!id) return;
+
+  const body = {
+    sell_price:       parseFloat(document.getElementById('qs-sell-price').value) || null,
+    sell_date:        document.getElementById('qs-sell-date').value || null,
+    selling_platform: document.getElementById('qs-platform').value || null,
+    platform_fee_pct: parseFloat(document.getElementById('qs-fee-pct').value) || 0,
+    shipping_cost:    parseFloat(document.getElementById('qs-shipping').value) || 0
+  };
+
+  const result = await api(`/api/items/${id}/sell`, 'POST', body);
+  document.getElementById('sell-modal').style.display = 'none';
+  toast(result.fully_sold ? 'Item fully sold!' : 'Sale recorded — units remaining', 'success');
+  loadStats();
+  loadItems();
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 
-function openDeleteModal(id, name) {
-  deleteTargetId = id;
-  document.getElementById('delete-item-name').textContent = name;
+async function modalDelete() {
+  if (!modalDeleteId) return;
+  const item = await api(`/api/items/${modalDeleteId}`);
+  deleteTargetId = modalDeleteId;
+  document.getElementById('delete-item-name').textContent = item.name;
+  closeModal();
   document.getElementById('delete-modal').style.display = 'flex';
 }
 

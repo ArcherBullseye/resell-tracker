@@ -50,6 +50,12 @@ const MIGRATIONS = [
     value      TEXT NOT NULL DEFAULT '',
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   )`,
+
+  // v3 — quantity: how many units were purchased in one buy
+  `ALTER TABLE items ADD COLUMN quantity INTEGER DEFAULT 1`,
+
+  // v4 — quantity_sold: units sold so far (item fully sold when quantity_sold >= quantity)
+  `ALTER TABLE items ADD COLUMN quantity_sold INTEGER DEFAULT 0`,
 ];
 
 function runMigrations() {
@@ -148,7 +154,7 @@ app.post('/api/items', (req, res) => {
     buy_price, buy_date, sell_price, sell_date,
     shipping_cost, selling_platform, platform_fee_pct,
     ebay_avg_price, ebay_low_price, ebay_high_price,
-    status, notes
+    status, notes, quantity
   } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Name is required' });
@@ -159,13 +165,13 @@ app.post('/api/items', (req, res) => {
       buy_price, buy_date, sell_price, sell_date,
       shipping_cost, selling_platform, platform_fee_pct,
       ebay_avg_price, ebay_low_price, ebay_high_price,
-      status, notes
+      status, notes, quantity
     ) VALUES (
       @barcode, @name, @description, @image_url, @category,
       @buy_price, @buy_date, @sell_price, @sell_date,
       @shipping_cost, @selling_platform, @platform_fee_pct,
       @ebay_avg_price, @ebay_low_price, @ebay_high_price,
-      @status, @notes
+      @status, @notes, @quantity
     )
   `).run({
     barcode: barcode || null, name,
@@ -176,7 +182,8 @@ app.post('/api/items', (req, res) => {
     selling_platform: selling_platform || null, platform_fee_pct: platform_fee_pct || 0,
     ebay_avg_price: ebay_avg_price || null, ebay_low_price: ebay_low_price || null,
     ebay_high_price: ebay_high_price || null,
-    status: status || 'inventory', notes: notes || null
+    status: status || 'inventory', notes: notes || null,
+    quantity: quantity || 1
   });
 
   res.status(201).json({ id: result.lastInsertRowid });
@@ -191,7 +198,7 @@ app.put('/api/items/:id', (req, res) => {
     buy_price, buy_date, sell_price, sell_date,
     shipping_cost, selling_platform, platform_fee_pct,
     ebay_avg_price, ebay_low_price, ebay_high_price,
-    status, notes
+    status, notes, quantity
   } = req.body;
 
   db.prepare(`
@@ -204,7 +211,7 @@ app.put('/api/items/:id', (req, res) => {
       platform_fee_pct = @platform_fee_pct,
       ebay_avg_price = @ebay_avg_price, ebay_low_price = @ebay_low_price,
       ebay_high_price = @ebay_high_price,
-      status = @status, notes = @notes,
+      status = @status, notes = @notes, quantity = @quantity,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = @id
   `).run({
@@ -217,7 +224,8 @@ app.put('/api/items/:id', (req, res) => {
     platform_fee_pct: platform_fee_pct || 0,
     ebay_avg_price: ebay_avg_price || null, ebay_low_price: ebay_low_price || null,
     ebay_high_price: ebay_high_price || null,
-    status: status || 'inventory', notes: notes || null
+    status: status || 'inventory', notes: notes || null,
+    quantity: quantity || 1
   });
 
   res.json({ success: true });
@@ -230,6 +238,40 @@ app.delete('/api/items/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// Quick-sell one unit from a multi-quantity item
+app.post('/api/items/:id/sell', (req, res) => {
+  const item = db.prepare('SELECT * FROM items WHERE id = ?').get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Not found' });
+
+  const { sell_price, sell_date, selling_platform, platform_fee_pct, shipping_cost } = req.body;
+  const newQtySold = (item.quantity_sold || 0) + 1;
+  const fullySOld  = newQtySold >= (item.quantity || 1);
+
+  db.prepare(`
+    UPDATE items SET
+      quantity_sold    = @quantity_sold,
+      sell_price       = @sell_price,
+      sell_date        = @sell_date,
+      selling_platform = @selling_platform,
+      platform_fee_pct = @platform_fee_pct,
+      shipping_cost    = @shipping_cost,
+      status           = @status,
+      updated_at       = CURRENT_TIMESTAMP
+    WHERE id = @id
+  `).run({
+    id: item.id,
+    quantity_sold:    newQtySold,
+    sell_price:       sell_price || null,
+    sell_date:        sell_date || null,
+    selling_platform: selling_platform || null,
+    platform_fee_pct: platform_fee_pct || 0,
+    shipping_cost:    shipping_cost || 0,
+    status:           fullySOld ? 'sold' : 'inventory'
+  });
+
+  res.json({ success: true, fully_sold: fullySOld, quantity_sold: newQtySold });
+});
+
 // ── Dashboard stats ──────────────────────────────────────────────────────────
 
 app.get('/api/stats', (req, res) => {
@@ -237,13 +279,13 @@ app.get('/api/stats', (req, res) => {
   const inventory = db.prepare("SELECT COUNT(*) as c FROM items WHERE status='inventory'").get().c;
   const sold      = db.prepare("SELECT COUNT(*) as c FROM items WHERE status='sold'").get().c;
 
-  const totalInvested = db.prepare('SELECT COALESCE(SUM(buy_price),0) as s FROM items').get().s;
-  const totalRevenue  = db.prepare("SELECT COALESCE(SUM(sell_price),0) as s FROM items WHERE status='sold'").get().s;
-  const totalShipping = db.prepare("SELECT COALESCE(SUM(shipping_cost),0) as s FROM items WHERE status='sold'").get().s;
+  const totalInvested = db.prepare('SELECT COALESCE(SUM(buy_price * COALESCE(quantity,1)),0) as s FROM items').get().s;
+  const totalRevenue  = db.prepare("SELECT COALESCE(SUM(sell_price * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
+  const totalShipping = db.prepare("SELECT COALESCE(SUM(shipping_cost * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
   const totalFees     = db.prepare(
-    "SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100), 0) as s FROM items WHERE status='sold'"
+    "SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100 * COALESCE(quantity_sold,1)), 0) as s FROM items WHERE quantity_sold > 0"
   ).get().s;
-  const costOfSold = db.prepare("SELECT COALESCE(SUM(buy_price),0) as s FROM items WHERE status='sold'").get().s;
+  const costOfSold = db.prepare("SELECT COALESCE(SUM(buy_price * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
 
   res.json({
     total, inventory, sold, totalInvested, totalRevenue,
@@ -339,5 +381,5 @@ app.get('/api/lookup/ebay', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.1.0 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.1.1 running on port ${PORT}`);
 });
