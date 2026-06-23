@@ -1,17 +1,13 @@
-version: "3.7"
+version: "3.8"
 
 services:
-  app:
+  resell-tracker:
     build: .
-    image: ghcr.io/ArcherBullseye/resell-tracker:latest
-    restart: on-failure
-    stop_grace_period: 1m
-    ports:
-      - "${APP_PORT:-3000}:3000"
-    environment:
-      - PORT=3000
-      - DATA_DIR=/app/data
-      - UPC_API_KEY=${UPC_API_KEY:-}
-      - EBAY_APP_ID=${EBAY_APP_ID:-}
+    network_mode: host
     volumes:
-      - "${APP_DATA_DIR:-./data}:/app/data"
+      - ${APP_DATA_DIR:-./data}:/app/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    labels:
+      - "umbrel.app-id=resell-tracker"

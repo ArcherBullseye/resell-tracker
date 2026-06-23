@@ -1,9 +1,10 @@
 manifestVersion: 1.1
 id: resell-tracker
+disabled: false
 name: Resell Tracker
 tagline: Track retail arbitrage buys, sells, and profits
 icon: https://raw.githubusercontent.com/ArcherBullseye/resell-tracker/main/umbrel-app-icon.jpg
-category: finance
+category: Finance
 version: "1.0.0"
 port: 3000
 description: >-
@@ -43,10 +44,7 @@ submitter: ArcherBullseye
 submission: https://github.com/ArcherBullseye/resell-tracker
 repo: https://github.com/ArcherBullseye/resell-tracker
 support: https://github.com/ArcherBullseye/resell-tracker/issues
+dependencies: []
 gallery: []
 releaseNotes: >-
   Initial release — full buy/sell tracking, barcode lookup, eBay price data, and profit dashboard.
-dependencies: []
-path: ""
-defaultUsername: ""
-defaultPassword: ""
