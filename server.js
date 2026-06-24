@@ -124,12 +124,16 @@ app.get('/api/settings', (req, res) => {
       : { configured: false, preview: '' };
   }
   result.TELEGRAM_CHAT_ID = getSetting('TELEGRAM_CHAT_ID');
+  const lowesCookies = getSetting('LOWES_COOKIES');
+  result.LOWES_COOKIES = lowesCookies
+    ? { configured: true, count: lowesCookies.split(';').filter(Boolean).length }
+    : { configured: false, count: 0 };
   result.VERSION = VERSION;
   res.json(result);
 });
 
 app.post('/api/settings', (req, res) => {
-  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'LOWES_COOKIES'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -561,9 +565,25 @@ process.on('exit', () => { if (_browser) _browser.close().catch(() => {}); });
 
 const noop = () => {};
 
+function parseCookieString(str) {
+  return str.split(';')
+    .map(c => c.trim()).filter(Boolean)
+    .map(c => {
+      const idx = c.indexOf('=');
+      if (idx < 0) return null;
+      return { name: c.slice(0, idx).trim(), value: c.slice(idx + 1).trim(), domain: '.lowes.com', path: '/' };
+    })
+    .filter(Boolean);
+}
+
 async function scrapeLowesPage(url, storeId = '', log = noop) {
   const browser = await getBrowser();
-  await warmUpLowes(browser, log);
+  const savedCookies = getSetting('LOWES_COOKIES');
+
+  // Only warm up when no real session cookies are available
+  if (!savedCookies) {
+    await warmUpLowes(browser, log);
+  }
 
   const page = await browser.newPage();
   try {
@@ -576,6 +596,16 @@ async function scrapeLowesPage(url, storeId = '', log = noop) {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Upgrade-Insecure-Requests': '1',
     });
+
+    // Inject real browser cookies if available (bypasses Akamai _abck validation)
+    if (savedCookies) {
+      const cookies = parseCookieString(savedCookies);
+      if (cookies.length) {
+        await page.setCookie(...cookies);
+        log(`Injecting ${cookies.length} saved session cookies…`);
+      }
+    }
+
     if (storeId) {
       await page.setCookie({ name: 'sn', value: String(storeId), domain: '.lowes.com', path: '/' });
     }

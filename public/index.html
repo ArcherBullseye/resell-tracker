@@ -378,6 +378,7 @@
       <div class="stabs">
         <button class="stab active" id="stab-btn-api"      onclick="switchSettingsTab('api')">&#128273; API Keys</button>
         <button class="stab"        id="stab-btn-telegram" onclick="switchSettingsTab('telegram')">&#128225; Telegram</button>
+        <button class="stab"        id="stab-btn-lowes"    onclick="switchSettingsTab('lowes')">&#127968; Lowe's</button>
       </div>
 
       <div class="modal-body">
@@ -442,6 +443,26 @@
             </div>
             <button class="btn btn-secondary" id="tg-test-btn" onclick="testTelegram()" style="margin-top:4px">Send Test Message</button>
             <div id="tg-test-result" class="key-status" style="margin-top:6px"></div>
+          </div>
+        </div>
+
+        <!-- Lowe's Tab -->
+        <div id="stab-lowes" style="display:none">
+          <div class="form-section">
+            <h3 class="section-title">Session Cookies</h3>
+            <p class="settings-help">
+              Lowe's uses Akamai bot protection that blocks headless browsers. Pasting your real browser's
+              cookies lets the scanner impersonate your session and bypass the block.<br><br>
+              <strong>Step 1:</strong> Drag this to your browser's bookmark bar:<br>
+              <a id="lowes-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('lowes.com')){alert('Navigate to lowes.com first, then click this bookmarklet.');return;}var c=document.cookie;if(!c){alert('No cookies found.');return;}var n=c.split(';').length;navigator.clipboard.writeText(c).then(function(){alert('✓ '+n+' cookies copied!\n\nPaste them in Resell Tracker → Settings → Lowe\'s tab.');}).catch(function(){prompt('Select all and copy:',c);});})();" draggable="true">&#128203; Copy Lowe's Cookies</a><br><br>
+              <strong>Step 2:</strong> Visit <strong>lowes.com</strong> in your browser, click the bookmarklet, then paste below.
+            </p>
+            <div id="lowes-cookie-status" class="key-status" style="margin-bottom:8px"></div>
+            <div class="form-group">
+              <label>Cookie String <span class="optional">(paste and save — leave blank to keep existing)</span></label>
+              <textarea id="setting-lowes-cookies" rows="4" placeholder="Paste cookie string here… (e.g. _abck=xxx; ak_bmsc=xxx; …)" autocomplete="off" style="font-size:0.75em;font-family:monospace;resize:vertical"></textarea>
+            </div>
+            <button class="btn btn-ghost" id="lowes-clear-btn" onclick="clearLowesCookies()" style="margin-top:4px">Clear Saved Cookies</button>
           </div>
         </div>
 

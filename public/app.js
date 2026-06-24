@@ -1038,7 +1038,7 @@ function toast(msg, type = '') {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 function switchSettingsTab(tab) {
-  ['api', 'telegram'].forEach(t => {
+  ['api', 'telegram', 'lowes'].forEach(t => {
     document.getElementById(`stab-${t}`).style.display      = t === tab ? 'block' : 'none';
     document.getElementById(`stab-btn-${t}`).classList.toggle('active', t === tab);
   });
@@ -1093,6 +1093,14 @@ async function openSettings() {
     : '<span class="key-missing">&#9675; Not set</span>';
   document.getElementById('tg-test-result').innerHTML = '';
 
+  // Lowe's cookies status
+  document.getElementById('setting-lowes-cookies').value = '';
+  const lc = data.LOWES_COOKIES;
+  document.getElementById('lowes-cookie-status').innerHTML = lc?.configured
+    ? `<span class="key-ok">&#10003; ${lc.count} cookies saved — scanner will use these</span>`
+    : '<span class="key-missing">&#9675; No cookies saved — scanner uses headless browser only</span>';
+  document.getElementById('lowes-clear-btn').style.display = lc?.configured ? 'inline-flex' : 'none';
+
   if (data.VERSION) document.getElementById('settings-version').textContent = `v${data.VERSION}`;
 
   document.getElementById('settings-modal').style.display = 'flex';
@@ -1104,20 +1112,30 @@ function closeSettings() {
 
 async function saveSettings() {
   const body = {};
-  const ebayVal  = document.getElementById('setting-ebay-app-id').value.trim();
-  const upcVal   = document.getElementById('setting-upc-key').value.trim();
-  const tgToken  = document.getElementById('setting-tg-token').value.trim();
-  const tgChatId = document.getElementById('setting-tg-chat-id').value.trim();
+  const ebayVal     = document.getElementById('setting-ebay-app-id').value.trim();
+  const upcVal      = document.getElementById('setting-upc-key').value.trim();
+  const tgToken     = document.getElementById('setting-tg-token').value.trim();
+  const tgChatId    = document.getElementById('setting-tg-chat-id').value.trim();
+  const lowesCookies = document.getElementById('setting-lowes-cookies').value.trim();
 
-  if (ebayVal)  body.EBAY_APP_ID         = ebayVal;
-  if (upcVal)   body.UPC_API_KEY          = upcVal;
-  if (tgToken)  body.TELEGRAM_BOT_TOKEN   = tgToken;
-  if (tgChatId) body.TELEGRAM_CHAT_ID     = tgChatId;
+  if (ebayVal)      body.EBAY_APP_ID       = ebayVal;
+  if (upcVal)       body.UPC_API_KEY       = upcVal;
+  if (tgToken)      body.TELEGRAM_BOT_TOKEN = tgToken;
+  if (tgChatId)     body.TELEGRAM_CHAT_ID  = tgChatId;
+  if (lowesCookies) body.LOWES_COOKIES     = lowesCookies;
 
   if (Object.keys(body).length === 0) { closeSettings(); return; }
   await api('/api/settings', 'POST', body);
   closeSettings();
   toast('Settings saved', 'success');
+}
+
+async function clearLowesCookies() {
+  await api('/api/settings', 'POST', { LOWES_COOKIES: '' });
+  toast('Lowe\'s cookies cleared', 'success');
+  document.getElementById('lowes-cookie-status').innerHTML =
+    '<span class="key-missing">&#9675; No cookies saved — scanner uses headless browser only</span>';
+  document.getElementById('lowes-clear-btn').style.display = 'none';
 }
 
 async function testTelegram() {
