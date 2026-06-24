@@ -707,7 +707,9 @@ async function importDeals() {
   const raw = ta.value.trim();
   if (!raw) return toast('Paste deal data first (use the bookmarklet on lowes.com)', 'error');
 
-  const minDiscount = document.getElementById('scanner-discount').value;
+  // Lowe's no longer exposes discount % reliably, so imports filter by max price instead.
+  const maxPriceRaw = document.getElementById('scanner-import-maxprice').value.trim();
+  const maxPrice = maxPriceRaw ? parseFloat(maxPriceRaw) : null;
 
   const statusEl  = document.getElementById('scanner-status');
   const gridEl    = document.getElementById('scanner-grid');
@@ -724,7 +726,7 @@ async function importDeals() {
   statusEl.innerHTML = '<div class="scanner-count">Parsing imported deals…</div>';
 
   try {
-    const data = await api('/api/lowes/import', 'POST', { nextData: raw, minDiscount });
+    const data = await api('/api/lowes/import', 'POST', { nextData: raw, maxPrice });
     importBtn.disabled = false;
 
     // api() returns the body even on 4xx/5xx; surface server error messages
@@ -735,11 +737,14 @@ async function importDeals() {
 
     if (!data.products?.length) {
       const hint = data.raw_keys?.length ? `<br><small>Page keys: ${esc(data.raw_keys.join(', '))}</small>` : '';
-      statusEl.innerHTML = `<div class="scanner-empty">${esc(data.message || `No deals at ${parseInt(minDiscount)}%+ off in the imported data.`)}${hint}</div>`;
+      statusEl.innerHTML = `<div class="scanner-empty">${esc(data.message || `No deals found in the pasted data. Make sure the Lowe's page loaded (scroll down once) before grabbing.`)}${hint}</div>`;
       return;
     }
 
-    statusEl.innerHTML = `<div class="scanner-count">Imported <strong>${data.products.length}</strong> items ${parseInt(minDiscount)}%+ off (from ${data.total} on the page)</div>`;
+    const withDisc = data.products.filter(p => p.discount_pct != null && p.discount_pct > 0).length;
+    const discNote = withDisc ? `, ${withDisc} with a known discount` : '';
+    const priceNote = maxPrice ? ` under $${maxPrice}` : '';
+    statusEl.innerHTML = `<div class="scanner-count">Imported <strong>${data.products.length}</strong> deals${priceNote} (from ${data.total} grabbed${discNote}). Add ones worth flipping to your tracker, then check eBay resale.</div>`;
     gridEl.innerHTML   = data.products.map(renderScanCard).join('');
     ta.value = ''; // clear the big blob once imported
   } catch (err) {
@@ -750,7 +755,11 @@ async function importDeals() {
 }
 
 function renderScanCard(item) {
+  const hasDisc = item.discount_pct != null && item.discount_pct > 0;
   const discountCls = item.discount_pct >= 70 ? 'scan-badge-red' : item.discount_pct >= 50 ? 'scan-badge-orange' : 'scan-badge-yellow';
+  const badge = hasDisc
+    ? `<div class="scan-badge ${discountCls}">${item.discount_pct}% OFF</div>`
+    : `<div class="scan-badge scan-badge-neutral">DEAL</div>`;
   const imgHtml = item.image
     ? `<img class="scan-card-img" src="${esc(item.image)}" onerror="this.style.display='none'" />`
     : '<div class="scan-card-img-ph">&#127968;</div>';
@@ -758,7 +767,7 @@ function renderScanCard(item) {
     <div class="scan-card">
       ${imgHtml}
       <div class="scan-card-body">
-        <div class="scan-badge ${discountCls}">${item.discount_pct}% OFF</div>
+        ${badge}
         <div class="scan-card-name">${esc(item.name || '—')}</div>
         ${item.model ? `<div class="scan-card-model">Model: ${esc(item.model)}</div>` : ''}
         ${item.category ? `<div class="scan-card-cat">${esc(item.category)}</div>` : ''}
@@ -1085,7 +1094,7 @@ function toast(msg, type = '') {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 function switchSettingsTab(tab) {
-  ['api', 'telegram', 'lowes'].forEach(t => {
+  ['api', 'telegram'].forEach(t => {
     document.getElementById(`stab-${t}`).style.display      = t === tab ? 'block' : 'none';
     document.getElementById(`stab-btn-${t}`).classList.toggle('active', t === tab);
   });

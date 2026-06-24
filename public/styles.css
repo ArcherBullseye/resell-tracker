@@ -1200,6 +1200,7 @@ textarea { resize: vertical; }
 .scan-badge-red    { background: var(--red-dim);    color: var(--red);    }
 .scan-badge-orange { background: rgba(232,119,34,0.15); color: #e87722; }
 .scan-badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+.scan-badge-neutral { background: var(--border); color: var(--text-muted); }
 
 .scan-card-name  { font-size: 12px; font-weight: 500; line-height: 1.4; flex: 1; }
 .scan-card-model { font-size: 10px; color: var(--text-dim); }

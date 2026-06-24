@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.13';
+const VERSION = '1.2.14';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -824,25 +824,66 @@ app.get('/api/lowes/clearance', async (req, res) => {
   }
 });
 
-// Bookmarklet import — parse __NEXT_DATA__ JSON copied from the user's real
-// (human, Akamai-passed) browser session. No headless scraping involved.
+// Filter a pre-extracted product array from the "Grab Lowe's Deals" bookmarklet.
+// Lowe's renders the deals grid in web components, so the bookmarklet builds the
+// product list from JSON-LD (name/sku/price/image/url — always present) and
+// best-effort harvests the discount from the DOM by SKU. Discount is therefore
+// often unknown; items with unknown discount are always kept (best-effort filter).
+function filterGrabbedProducts(rawProducts, maxPrice) {
+  const products = (rawProducts || [])
+    .map(p => {
+      const now = p.now_price != null ? Number(p.now_price) : null;
+      const was = p.was_price != null ? Number(p.was_price) : null;
+      let pct = p.discount_pct != null ? Number(p.discount_pct) : null;
+      if (pct == null && was && now && was > now) pct = Math.round((was - now) / was * 100);
+      return {
+        id:           p.sku || null,
+        name:         p.name || '',
+        image:        p.image || null,
+        now_price:    now,
+        was_price:    was,
+        discount_pct: pct,
+        model:        null,
+        category:     p.brand || null,
+        url:          p.url || null,
+        store_avail:  null,
+      };
+    })
+    .filter(p => p.name)
+    // optional max-price ceiling (items with unknown price are always kept)
+    .filter(p => maxPrice == null || p.now_price == null || p.now_price <= maxPrice)
+    .sort((a, b) => {
+      const da = a.discount_pct == null ? -1 : a.discount_pct;
+      const db = b.discount_pct == null ? -1 : b.discount_pct;
+      if (db !== da) return db - da;             // known discounts first, deepest first
+      return (a.now_price ?? Infinity) - (b.now_price ?? Infinity); // then cheapest first
+    });
+  return { products, total: (rawProducts || []).length };
+}
+
+// Bookmarklet import — parse the deal data the "Grab Lowe's Deals" bookmarklet
+// copied from the user's real (human, Akamai-passed) browser session.
 app.post('/api/lowes/import', (req, res) => {
-  const { nextData, minDiscount = 30 } = req.body;
-  if (!nextData) return res.status(400).json({ error: 'NO_DATA', message: 'No data pasted. Use the bookmarklet on a Lowe\'s deals page, then paste here.' });
+  const { nextData, minDiscount = 30, maxPrice = null } = req.body;
+  if (!nextData) return res.status(400).json({ error: 'NO_DATA', message: 'No data pasted. Use the "Grab Lowe\'s Deals" bookmarklet on a Lowe\'s deals page, then paste here.' });
   let obj;
   try {
     obj = typeof nextData === 'string' ? JSON.parse(nextData) : nextData;
   } catch {
-    return res.status(400).json({ error: 'BAD_JSON', message: 'That doesn\'t look like valid page data. Re-copy with the bookmarklet on a Lowe\'s deals page (it copies the whole __NEXT_DATA__ block).' });
+    return res.status(400).json({ error: 'BAD_JSON', message: 'That doesn\'t look like valid deal data. Re-grab with the "Grab Lowe\'s Deals" bookmarklet on a Lowe\'s deals page, then paste.' });
   }
   try {
-    const result = parseProducts(obj, parseFloat(minDiscount));
+    const maxP = (maxPrice != null && maxPrice !== '' && !isNaN(maxPrice)) ? Number(maxPrice) : null;
+    // New format from the grabber bookmarklet: { source:'lowes-domgrab', products:[...] }
+    const result = (obj && obj.source === 'lowes-domgrab' && Array.isArray(obj.products))
+      ? filterGrabbedProducts(obj.products, maxP)
+      : parseProducts(obj, parseFloat(minDiscount)); // legacy __NEXT_DATA__ fallback
     if (!result.products?.length && !result.total) {
-      return res.json({ ...result, imported: true, message: 'No products found in the pasted data. Make sure you were on a Lowe\'s deals/listing page (with products visible) when you clicked the bookmarklet.' });
+      return res.json({ ...result, imported: true, message: 'No deals found in the pasted data. Make sure the Lowe\'s deals page finished loading (scroll down once) before clicking the bookmarklet.' });
     }
     res.json({ ...result, imported: true });
   } catch (err) {
-    res.status(500).json({ error: err.message, message: 'Could not read products from the pasted data.' });
+    res.status(500).json({ error: err.message, message: 'Could not read deals from the pasted data.' });
   }
 });
 

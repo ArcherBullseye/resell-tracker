@@ -157,14 +157,20 @@
           <div class="scanner-section scanner-import-section">
             <div class="scanner-section-title">&#128203; Import from Browser</div>
             <p class="scanner-import-help">
-              Lowe's blocks automated scans. To get deals reliably: open a Lowe's
-              <strong>Deals</strong> page in your browser, click the
-              <strong>Grab Lowe's Deals</strong> bookmarklet (set up in Settings &rarr; Lowe's),
-              then paste here and Import.
+              Lowe's blocks automated scans, so grab deals from your own browser:<br>
+              <strong>1.</strong> Drag this button to your browser's bookmark bar (one-time):<br>
+              <a id="lowes-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('lowes.com')){alert('Open a Lowe\'s Deals page first, then click this.');return;}function num(s){if(s==null)return null;var m=String(s).replace(/[^\d.]/g,'');return m?parseFloat(m):null;}var products=[],seen={};document.querySelectorAll('script[type=&quot;application/ld+json&quot;]').forEach(function(s){try{var j=JSON.parse(s.textContent);var arr=Array.isArray(j)?j:(j['@graph']?j['@graph']:[j]);arr.forEach(function(p){if(p&&p['@type']==='Product'){var sku=String(p.sku||'');if(!sku||seen[sku])return;seen[sku]=1;var off=Array.isArray(p.offers)?p.offers[0]:p.offers;products.push({sku:sku,name:p.name||'',brand:(p.brand&&p.brand.name)||'',image:(typeof p.image==='string'?p.image:(Array.isArray(p.image)?p.image[0]:'')),url:(off&&off.url)||'',now_price:off&&off.price!=null?Number(off.price):null,was_price:null,discount_pct:null});}});}catch(e){}});function collect(root){var a=[];try{root.querySelectorAll('[data-webvision-id]').forEach(function(e){a.push(e);});root.querySelectorAll('*').forEach(function(e){if(e.shadowRoot)a=a.concat(collect(e.shadowRoot));});}catch(e){}return a;}var map={};collect(document).forEach(function(el){var sku=el.getAttribute('data-webvision-id');if(!sku)return;var sb=el.querySelector('[data-component=&quot;SavingsBlock&quot;]');var rp=el.querySelector('[data-component=&quot;RegularPrice&quot;]');var now=rp?num(rp.textContent):null;var was=null,pct=null;if(sb){var tx=sb.textContent||'';var wm=tx.match(/\$([\d.,]+)/);if(wm)was=parseFloat(wm[1].replace(/,/g,''));var pm=tx.match(/(\d+)\s*%/);if(pm)pct=parseInt(pm[1]);}if(pct==null&&was&&now&&was>now)pct=Math.round((was-now)/was*100);if(was||pct!=null)map[sku]={was:was,pct:pct,now:now};});products.forEach(function(p){var d=map[p.sku];if(d){p.was_price=d.was;p.discount_pct=d.pct;if(d.now!=null)p.now_price=d.now;}});if(!products.length){alert('No deals found. Let the page finish loading (scroll down once), then click again.');return;}var json=JSON.stringify({source:'lowes-domgrab',v:1,products:products});navigator.clipboard.writeText(json).then(function(){alert('✓ Grabbed '+products.length+' deals!\n\nPaste into Resell Tracker → Scanner → Import from Browser.');}).catch(function(){var w=window.open('','_blank');w.document.body.innerHTML='<p>Copy failed - select all and copy:</p>';var ta=w.document.createElement('textarea');ta.style.cssText='width:100%;height:80vh';ta.value=json;w.document.body.appendChild(ta);ta.select();});})();" draggable="true">&#128203; Grab Lowe's Deals</a><br>
+              <strong>2.</strong> On <strong>lowes.com</strong>, open a Deals listing for your store, scroll down once so all items load, then click the bookmarklet.<br>
+              <strong>3.</strong> Paste below and Import.
             </p>
             <textarea id="scanner-import-data" class="scanner-input" rows="3"
                       style="width:100%;font-family:monospace;font-size:0.72em;resize:vertical;margin-bottom:8px"
-                      placeholder="Paste copied deal data here…" autocomplete="off"></textarea>
+                      placeholder="Paste grabbed deal data here…" autocomplete="off"></textarea>
+            <div class="scanner-input-row" style="margin-bottom:8px;align-items:center">
+              <label class="scanner-field-label" style="margin:0">Max price&nbsp;$</label>
+              <input type="number" id="scanner-import-maxprice" class="scanner-input" min="0" step="1"
+                     placeholder="any" style="width:90px" autocomplete="off" />
+            </div>
             <button class="btn btn-scanner scanner-go-btn" id="scanner-import-btn" onclick="importDeals()">&#128229; Import Deals</button>
           </div>
 
@@ -393,7 +399,6 @@
       <div class="stabs">
         <button class="stab active" id="stab-btn-api"      onclick="switchSettingsTab('api')">&#128273; API Keys</button>
         <button class="stab"        id="stab-btn-telegram" onclick="switchSettingsTab('telegram')">&#128225; Telegram</button>
-        <button class="stab"        id="stab-btn-lowes"    onclick="switchSettingsTab('lowes')">&#127968; Lowe's</button>
       </div>
 
       <div class="modal-body">
@@ -458,25 +463,6 @@
             </div>
             <button class="btn btn-secondary" id="tg-test-btn" onclick="testTelegram()" style="margin-top:4px">Send Test Message</button>
             <div id="tg-test-result" class="key-status" style="margin-top:6px"></div>
-          </div>
-        </div>
-
-        <!-- Lowe's Tab -->
-        <div id="stab-lowes" style="display:none">
-          <div class="form-section">
-            <h3 class="section-title">Grab Lowe's Deals</h3>
-            <p class="settings-help">
-              Lowe's uses Akamai bot protection that blocks automated scans. The reliable way to get
-              deals is to read them straight from a page your <strong>own browser</strong> has loaded —
-              no bot detection possible, because it's really you. Set up the one-time bookmarklet below.<br><br>
-              <strong>Step 1:</strong> Drag this to your browser's bookmark bar:<br>
-              <a id="lowes-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('lowes.com')){alert('Open a Lowe\'s Deals page first, then click this.');return;}var el=document.getElementById('__NEXT_DATA__');if(!el||!el.textContent){alert('No deal data found on this page. Make sure you are on a Lowe\'s deals or product listing page (with products visible).');return;}var t=el.textContent;navigator.clipboard.writeText(t).then(function(){alert('✓ Deal data copied ('+Math.round(t.length/1024)+' KB)!\n\nPaste it in Resell Tracker → Scanner → Import from Browser.');}).catch(function(){var w=window.open('','_blank');w.document.body.innerHTML='<p>Copy failed — select all below and copy manually:</p>';var ta=w.document.createElement('textarea');ta.style.width='100%';ta.style.height='80vh';ta.value=t;w.document.body.appendChild(ta);ta.select();});})();" draggable="true">&#128203; Grab Lowe's Deals</a><br><br>
-              <strong>Step 2:</strong> On <strong>lowes.com</strong>, go to a Deals / clearance listing for your store,
-              click the bookmarklet, then paste into <strong>Scanner &rarr; Import from Browser</strong> and hit Import.
-            </p>
-            <div class="settings-help" style="opacity:0.7;font-size:0.8em">
-              Tip: set your store on lowes.com first so prices and availability match your location.
-            </div>
           </div>
         </div>
 
