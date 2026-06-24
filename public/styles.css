@@ -907,6 +907,17 @@ textarea { resize: vertical; }
   margin-bottom: 12px;
 }
 
+.scanner-import-section {
+  margin-top: 4px;
+  border-color: var(--accent, var(--border));
+}
+.scanner-import-help {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+
 .scanner-field { margin-bottom: 12px; }
 .scanner-field:last-child { margin-bottom: 0; }
 

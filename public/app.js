@@ -702,6 +702,53 @@ function runScan(page = 1) {
   };
 }
 
+async function importDeals() {
+  const ta = document.getElementById('scanner-import-data');
+  const raw = ta.value.trim();
+  if (!raw) return toast('Paste deal data first (use the bookmarklet on lowes.com)', 'error');
+
+  const minDiscount = document.getElementById('scanner-discount').value;
+
+  const statusEl  = document.getElementById('scanner-status');
+  const gridEl    = document.getElementById('scanner-grid');
+  const paginEl   = document.getElementById('scanner-pagination');
+  const importBtn = document.getElementById('scanner-import-btn');
+  const emptyEl   = document.getElementById('scanner-empty-state');
+
+  // Reset UI
+  statusEl.innerHTML    = '';
+  gridEl.innerHTML      = '';
+  paginEl.style.display = 'none';
+  if (emptyEl) emptyEl.style.display = 'none';
+  importBtn.disabled = true;
+  statusEl.innerHTML = '<div class="scanner-count">Parsing imported deals…</div>';
+
+  try {
+    const data = await api('/api/lowes/import', 'POST', { nextData: raw, minDiscount });
+    importBtn.disabled = false;
+
+    // api() returns the body even on 4xx/5xx; surface server error messages
+    if (data.error && !data.imported) {
+      statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Import failed</strong><br>${esc(data.message || data.error)}</div>`;
+      return;
+    }
+
+    if (!data.products?.length) {
+      const hint = data.raw_keys?.length ? `<br><small>Page keys: ${esc(data.raw_keys.join(', '))}</small>` : '';
+      statusEl.innerHTML = `<div class="scanner-empty">${esc(data.message || `No deals at ${parseInt(minDiscount)}%+ off in the imported data.`)}${hint}</div>`;
+      return;
+    }
+
+    statusEl.innerHTML = `<div class="scanner-count">Imported <strong>${data.products.length}</strong> items ${parseInt(minDiscount)}%+ off (from ${data.total} on the page)</div>`;
+    gridEl.innerHTML   = data.products.map(renderScanCard).join('');
+    ta.value = ''; // clear the big blob once imported
+  } catch (err) {
+    importBtn.disabled = false;
+    const msg = err?.message || 'Import failed. Re-copy with the bookmarklet on a Lowe\'s deals page.';
+    statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Import failed</strong><br>${esc(msg)}</div>`;
+  }
+}
+
 function renderScanCard(item) {
   const discountCls = item.discount_pct >= 70 ? 'scan-badge-red' : item.discount_pct >= 50 ? 'scan-badge-orange' : 'scan-badge-yellow';
   const imgHtml = item.image
@@ -1093,14 +1140,6 @@ async function openSettings() {
     : '<span class="key-missing">&#9675; Not set</span>';
   document.getElementById('tg-test-result').innerHTML = '';
 
-  // Lowe's cookies status
-  document.getElementById('setting-lowes-cookies').value = '';
-  const lc = data.LOWES_COOKIES;
-  document.getElementById('lowes-cookie-status').innerHTML = lc?.configured
-    ? `<span class="key-ok">&#10003; ${lc.count} cookies saved — scanner will use these</span>`
-    : '<span class="key-missing">&#9675; No cookies saved — scanner uses headless browser only</span>';
-  document.getElementById('lowes-clear-btn').style.display = lc?.configured ? 'inline-flex' : 'none';
-
   if (data.VERSION) document.getElementById('settings-version').textContent = `v${data.VERSION}`;
 
   document.getElementById('settings-modal').style.display = 'flex';
@@ -1116,26 +1155,16 @@ async function saveSettings() {
   const upcVal      = document.getElementById('setting-upc-key').value.trim();
   const tgToken     = document.getElementById('setting-tg-token').value.trim();
   const tgChatId    = document.getElementById('setting-tg-chat-id').value.trim();
-  const lowesCookies = document.getElementById('setting-lowes-cookies').value.trim();
 
   if (ebayVal)      body.EBAY_APP_ID       = ebayVal;
   if (upcVal)       body.UPC_API_KEY       = upcVal;
   if (tgToken)      body.TELEGRAM_BOT_TOKEN = tgToken;
   if (tgChatId)     body.TELEGRAM_CHAT_ID  = tgChatId;
-  if (lowesCookies) body.LOWES_COOKIES     = lowesCookies;
 
   if (Object.keys(body).length === 0) { closeSettings(); return; }
   await api('/api/settings', 'POST', body);
   closeSettings();
   toast('Settings saved', 'success');
-}
-
-async function clearLowesCookies() {
-  await api('/api/settings', 'POST', { LOWES_COOKIES: '' });
-  toast('Lowe\'s cookies cleared', 'success');
-  document.getElementById('lowes-cookie-status').innerHTML =
-    '<span class="key-missing">&#9675; No cookies saved — scanner uses headless browser only</span>';
-  document.getElementById('lowes-clear-btn').style.display = 'none';
 }
 
 async function testTelegram() {

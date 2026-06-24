@@ -153,6 +153,21 @@
           <button class="btn btn-scanner scanner-go-btn" id="scanner-scan-btn" onclick="runScan(1)">&#128269; Scan Deals</button>
           <button class="btn btn-secondary scanner-save-btn" onclick="saveCurrentFilter()">&#128190; Save This Filter</button>
 
+          <!-- Import from browser (reliable path — bypasses Akamai using your real session) -->
+          <div class="scanner-section scanner-import-section">
+            <div class="scanner-section-title">&#128203; Import from Browser</div>
+            <p class="scanner-import-help">
+              Lowe's blocks automated scans. To get deals reliably: open a Lowe's
+              <strong>Deals</strong> page in your browser, click the
+              <strong>Grab Lowe's Deals</strong> bookmarklet (set up in Settings &rarr; Lowe's),
+              then paste here and Import.
+            </p>
+            <textarea id="scanner-import-data" class="scanner-input" rows="3"
+                      style="width:100%;font-family:monospace;font-size:0.72em;resize:vertical;margin-bottom:8px"
+                      placeholder="Paste copied deal data here…" autocomplete="off"></textarea>
+            <button class="btn btn-scanner scanner-go-btn" id="scanner-import-btn" onclick="importDeals()">&#128229; Import Deals</button>
+          </div>
+
           <!-- Save Filter Form -->
           <div id="save-filter-form" style="display:none">
             <div class="scanner-section" style="margin-top:0">
@@ -202,7 +217,7 @@
           <div id="scanner-empty-state" class="scanner-empty-state">
             <div class="scanner-empty-icon">&#128269;</div>
             <div class="scanner-empty-title">Ready to scan</div>
-            <div class="scanner-empty-body">Choose your store and filters, then hit <strong>Scan Deals</strong> to find discounts.</div>
+            <div class="scanner-empty-body">Set your discount filter, then <strong>Import from Browser</strong> (most reliable) or try <strong>Scan Deals</strong>.</div>
           </div>
 
         </div>
@@ -449,20 +464,19 @@
         <!-- Lowe's Tab -->
         <div id="stab-lowes" style="display:none">
           <div class="form-section">
-            <h3 class="section-title">Session Cookies</h3>
+            <h3 class="section-title">Grab Lowe's Deals</h3>
             <p class="settings-help">
-              Lowe's uses Akamai bot protection that blocks headless browsers. Pasting your real browser's
-              cookies lets the scanner impersonate your session and bypass the block.<br><br>
+              Lowe's uses Akamai bot protection that blocks automated scans. The reliable way to get
+              deals is to read them straight from a page your <strong>own browser</strong> has loaded —
+              no bot detection possible, because it's really you. Set up the one-time bookmarklet below.<br><br>
               <strong>Step 1:</strong> Drag this to your browser's bookmark bar:<br>
-              <a id="lowes-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('lowes.com')){alert('Navigate to lowes.com first, then click this bookmarklet.');return;}var c=document.cookie;if(!c){alert('No cookies found.');return;}var n=c.split(';').length;navigator.clipboard.writeText(c).then(function(){alert('✓ '+n+' cookies copied!\n\nPaste them in Resell Tracker → Settings → Lowe\'s tab.');}).catch(function(){prompt('Select all and copy:',c);});})();" draggable="true">&#128203; Copy Lowe's Cookies</a><br><br>
-              <strong>Step 2:</strong> Visit <strong>lowes.com</strong> in your browser, click the bookmarklet, then paste below.
+              <a id="lowes-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('lowes.com')){alert('Open a Lowe\'s Deals page first, then click this.');return;}var el=document.getElementById('__NEXT_DATA__');if(!el||!el.textContent){alert('No deal data found on this page. Make sure you are on a Lowe\'s deals or product listing page (with products visible).');return;}var t=el.textContent;navigator.clipboard.writeText(t).then(function(){alert('✓ Deal data copied ('+Math.round(t.length/1024)+' KB)!\n\nPaste it in Resell Tracker → Scanner → Import from Browser.');}).catch(function(){var w=window.open('','_blank');w.document.body.innerHTML='<p>Copy failed — select all below and copy manually:</p>';var ta=w.document.createElement('textarea');ta.style.width='100%';ta.style.height='80vh';ta.value=t;w.document.body.appendChild(ta);ta.select();});})();" draggable="true">&#128203; Grab Lowe's Deals</a><br><br>
+              <strong>Step 2:</strong> On <strong>lowes.com</strong>, go to a Deals / clearance listing for your store,
+              click the bookmarklet, then paste into <strong>Scanner &rarr; Import from Browser</strong> and hit Import.
             </p>
-            <div id="lowes-cookie-status" class="key-status" style="margin-bottom:8px"></div>
-            <div class="form-group">
-              <label>Cookie String <span class="optional">(paste and save — leave blank to keep existing)</span></label>
-              <textarea id="setting-lowes-cookies" rows="4" placeholder="Paste cookie string here… (e.g. _abck=xxx; ak_bmsc=xxx; …)" autocomplete="off" style="font-size:0.75em;font-family:monospace;resize:vertical"></textarea>
+            <div class="settings-help" style="opacity:0.7;font-size:0.8em">
+              Tip: set your store on lowes.com first so prices and availability match your location.
             </div>
-            <button class="btn btn-ghost" id="lowes-clear-btn" onclick="clearLowesCookies()" style="margin-top:4px">Clear Saved Cookies</button>
           </div>
         </div>
 

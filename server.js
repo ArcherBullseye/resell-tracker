@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.12';
+const VERSION = '1.2.13';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -109,7 +109,7 @@ function getSetting(key) {
   return (row && row.value) || process.env[key] || '';
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '12mb' })); // __NEXT_DATA__ blobs from bookmarklet import can be large
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -821,6 +821,28 @@ app.get('/api/lowes/clearance', async (req, res) => {
         ? 'Lowe\'s page loaded but no product data found. Check server logs.'
         : err.message,
     });
+  }
+});
+
+// Bookmarklet import — parse __NEXT_DATA__ JSON copied from the user's real
+// (human, Akamai-passed) browser session. No headless scraping involved.
+app.post('/api/lowes/import', (req, res) => {
+  const { nextData, minDiscount = 30 } = req.body;
+  if (!nextData) return res.status(400).json({ error: 'NO_DATA', message: 'No data pasted. Use the bookmarklet on a Lowe\'s deals page, then paste here.' });
+  let obj;
+  try {
+    obj = typeof nextData === 'string' ? JSON.parse(nextData) : nextData;
+  } catch {
+    return res.status(400).json({ error: 'BAD_JSON', message: 'That doesn\'t look like valid page data. Re-copy with the bookmarklet on a Lowe\'s deals page (it copies the whole __NEXT_DATA__ block).' });
+  }
+  try {
+    const result = parseProducts(obj, parseFloat(minDiscount));
+    if (!result.products?.length && !result.total) {
+      return res.json({ ...result, imported: true, message: 'No products found in the pasted data. Make sure you were on a Lowe\'s deals/listing page (with products visible) when you clicked the bookmarklet.' });
+    }
+    res.json({ ...result, imported: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message, message: 'Could not read products from the pasted data.' });
   }
 });
 
