@@ -543,11 +543,10 @@ async function openScanner() {
   document.getElementById('scanner-panel').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
 
-  // Load saved store
   const saved = await api('/api/lowes/settings');
-  if (saved.storeId) {
-    setScannerStore(saved.storeId, saved.storeName || `Store #${saved.storeId}`);
-  }
+  if (saved.storeId) setScannerStore(saved.storeId, saved.storeName || `Store #${saved.storeId}`);
+
+  loadSavedFilters();
 }
 
 function closeScanner() {
@@ -675,6 +674,111 @@ function renderScanCard(item) {
         </div>
       </div>
     </div>`;
+}
+
+// ── Saved Filters ─────────────────────────────────────────────────────────────
+
+function saveCurrentFilter() {
+  if (!scannerStoreId) return toast('Select a store first', 'error');
+  document.getElementById('filter-save-name').value = '';
+  document.getElementById('save-filter-form').style.display = 'block';
+  document.getElementById('filter-save-name').focus();
+}
+
+async function confirmSaveFilter() {
+  const name = document.getElementById('filter-save-name').value.trim();
+  if (!name) return toast('Enter a filter name', 'error');
+  const body = {
+    name,
+    store_id:        scannerStoreId,
+    store_name:      scannerStoreName,
+    min_discount:    parseInt(document.getElementById('scanner-discount').value),
+    category:        document.getElementById('scanner-category').value,
+    interval_hours:  0,
+    notify_telegram: document.getElementById('filter-notify-tg').checked ? 1 : 0,
+  };
+  await api('/api/scanner/filters', 'POST', body);
+  document.getElementById('save-filter-form').style.display = 'none';
+  toast('Filter saved', 'success');
+  loadSavedFilters();
+}
+
+async function loadSavedFilters() {
+  const filters = await api('/api/scanner/filters');
+  const section = document.getElementById('scanner-saved-section');
+  const list    = document.getElementById('scanner-filters-list');
+
+  if (!filters.length) { section.style.display = 'none'; return; }
+
+  section.style.display = 'block';
+  list.innerHTML = filters.map(renderFilterCard).join('');
+}
+
+function renderFilterCard(f) {
+  const lastRun = f.last_run ? fmtDate(f.last_run.split(' ')[0]) : 'Never';
+  const schedLabel = f.interval_hours > 0 ? `Every ${f.interval_hours}h` : 'Manual';
+  return `
+    <div class="filter-card" id="filter-card-${f.id}">
+      <div class="filter-card-main">
+        <div class="filter-card-name">${esc(f.name)}</div>
+        <div class="filter-card-meta">
+          ${esc(f.store_name || f.store_id)} &middot; ${f.min_discount}%+ off
+          ${f.category ? ' &middot; ' + esc(f.category) : ''}
+        </div>
+        <div class="filter-card-sub">
+          Last run: ${lastRun}${f.last_count ? ` (${f.last_count} items)` : ''}
+          &middot; ${f.notify_telegram ? '&#128225; Telegram on' : 'No alert'}
+        </div>
+      </div>
+      <div class="filter-card-right">
+        <select class="filter-interval-sel" onchange="updateFilterInterval(${f.id}, this.value)">
+          <option value="0"  ${f.interval_hours===0  ?'selected':''}>Manual</option>
+          <option value="2"  ${f.interval_hours===2  ?'selected':''}>Every 2h</option>
+          <option value="4"  ${f.interval_hours===4  ?'selected':''}>Every 4h</option>
+          <option value="6"  ${f.interval_hours===6  ?'selected':''}>Every 6h</option>
+          <option value="12" ${f.interval_hours===12 ?'selected':''}>Every 12h</option>
+          <option value="24" ${f.interval_hours===24 ?'selected':''}>Every 24h</option>
+        </select>
+        <div class="filter-card-actions">
+          <button class="btn btn-secondary btn-xs" onclick="runSavedFilter(${f.id})">&#9654; Run</button>
+          <button class="btn btn-ghost btn-xs" onclick="loadFilterIntoScanner(${f.id}, '${esc(f.store_id)}', '${esc(f.store_name)}', ${f.min_discount}, '${esc(f.category)}')">Load</button>
+          <button class="btn btn-danger btn-xs" onclick="deleteSavedFilter(${f.id})">&#128465;</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function updateFilterInterval(id, hours) {
+  const filter = (await api('/api/scanner/filters')).find(f => f.id === id);
+  if (!filter) return;
+  await api(`/api/scanner/filters/${id}`, 'PUT', { ...filter, interval_hours: parseInt(hours) });
+  toast(parseInt(hours) > 0 ? `Scheduled every ${hours}h` : 'Set to manual', 'success');
+}
+
+async function runSavedFilter(id) {
+  const card = document.getElementById(`filter-card-${id}`);
+  if (card) card.style.opacity = '0.5';
+  const result = await api(`/api/scanner/filters/${id}/run`, 'POST');
+  if (card) card.style.opacity = '1';
+  if (result.ok) {
+    toast(`Scan complete — ${result.count} item${result.count !== 1 ? 's' : ''} found`, 'success');
+    loadSavedFilters();
+  } else {
+    toast(result.error || 'Scan failed', 'error');
+  }
+}
+
+async function deleteSavedFilter(id) {
+  if (!confirm('Delete this saved filter?')) return;
+  await api(`/api/scanner/filters/${id}`, 'DELETE');
+  loadSavedFilters();
+}
+
+function loadFilterIntoScanner(id, storeId, storeName, minDiscount, category) {
+  setScannerStore(storeId, storeName || `Store #${storeId}`);
+  document.getElementById('scanner-discount').value = minDiscount;
+  document.getElementById('scanner-discount-label').textContent = minDiscount + '%';
+  document.getElementById('scanner-category').value = category || '';
 }
 
 function addScanItem(item) {
@@ -891,7 +995,15 @@ function toast(msg, type = '') {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
+function switchSettingsTab(tab) {
+  ['api', 'telegram'].forEach(t => {
+    document.getElementById(`stab-${t}`).style.display      = t === tab ? 'block' : 'none';
+    document.getElementById(`stab-btn-${t}`).classList.toggle('active', t === tab);
+  });
+}
+
 async function openSettings() {
+  switchSettingsTab('api');
   const data = await api('/api/settings');
 
   const ebayInput = document.getElementById('setting-ebay-app-id');
@@ -923,6 +1035,22 @@ async function openSettings() {
       '<span class="key-ok">&#10003; Using free tier (100 lookups/day)</span>';
   }
 
+  // Telegram tab
+  if (data.TELEGRAM_BOT_TOKEN?.configured) {
+    document.getElementById('setting-tg-token').placeholder = data.TELEGRAM_BOT_TOKEN.preview;
+    document.getElementById('setting-tg-token').value = '';
+    document.getElementById('tg-token-status').innerHTML = '<span class="key-ok">&#10003; Configured</span>';
+  } else {
+    document.getElementById('setting-tg-token').placeholder = '1234567890:ABCdef…';
+    document.getElementById('setting-tg-token').value = '';
+    document.getElementById('tg-token-status').innerHTML = '<span class="key-missing">&#9675; Not set</span>';
+  }
+  document.getElementById('setting-tg-chat-id').value = data.TELEGRAM_CHAT_ID || '';
+  document.getElementById('tg-chat-status').innerHTML = data.TELEGRAM_CHAT_ID
+    ? `<span class="key-ok">&#10003; Chat ID: ${data.TELEGRAM_CHAT_ID}</span>`
+    : '<span class="key-missing">&#9675; Not set</span>';
+  document.getElementById('tg-test-result').innerHTML = '';
+
   document.getElementById('settings-modal').style.display = 'flex';
 }
 
@@ -931,23 +1059,35 @@ function closeSettings() {
 }
 
 async function saveSettings() {
-  const ebayVal = document.getElementById('setting-ebay-app-id').value.trim();
-  const upcVal  = document.getElementById('setting-upc-key').value.trim();
-
   const body = {};
-  // Only send a key if the user typed something — blank means "leave unchanged"
-  // unless they explicitly want to clear it (which they can do by typing a space, then saving)
-  if (ebayVal !== '') body.EBAY_APP_ID = ebayVal;
-  if (upcVal  !== '') body.UPC_API_KEY  = upcVal;
+  const ebayVal  = document.getElementById('setting-ebay-app-id').value.trim();
+  const upcVal   = document.getElementById('setting-upc-key').value.trim();
+  const tgToken  = document.getElementById('setting-tg-token').value.trim();
+  const tgChatId = document.getElementById('setting-tg-chat-id').value.trim();
 
-  if (Object.keys(body).length === 0) {
-    closeSettings();
-    return;
-  }
+  if (ebayVal)  body.EBAY_APP_ID         = ebayVal;
+  if (upcVal)   body.UPC_API_KEY          = upcVal;
+  if (tgToken)  body.TELEGRAM_BOT_TOKEN   = tgToken;
+  if (tgChatId) body.TELEGRAM_CHAT_ID     = tgChatId;
 
+  if (Object.keys(body).length === 0) { closeSettings(); return; }
   await api('/api/settings', 'POST', body);
   closeSettings();
   toast('Settings saved', 'success');
+}
+
+async function testTelegram() {
+  const btn = document.getElementById('tg-test-btn');
+  const res = document.getElementById('tg-test-result');
+  btn.disabled = true;
+  res.innerHTML = '<span style="color:var(--text-dim)">Sending…</span>';
+  const data = await api('/api/telegram/test', 'POST');
+  btn.disabled = false;
+  if (data.ok) {
+    res.innerHTML = '<span class="key-ok">&#10003; Message sent! Check Telegram.</span>';
+  } else {
+    res.innerHTML = `<span class="key-missing">&#10007; Failed: ${esc(data.error || 'Unknown error')}</span>`;
+  }
 }
 
 function toggleKeyVis(inputId, btn) {

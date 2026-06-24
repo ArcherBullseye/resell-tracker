@@ -23,8 +23,8 @@
           <div id="search-dropdown" class="search-dropdown" style="display:none"></div>
         </div>
         <div class="header-actions">
-          <button class="btn btn-scanner" onclick="openScanner()" title="Lowe's Clearance Scanner">&#127968; Scanner</button>
           <button class="btn btn-icon" onclick="openSettings()" title="Settings">&#9881;</button>
+          <button class="btn btn-scanner" onclick="openScanner()" title="Lowe's Clearance Scanner">&#127968; Scanner</button>
           <button class="btn btn-primary" onclick="openModal('add')">+ Add Item</button>
         </div>
       </div>
@@ -131,7 +131,35 @@
         </div>
       </div>
 
-      <button class="btn btn-primary scanner-scan-btn" id="scanner-scan-btn" onclick="runScan(1)">&#128269; Scan Clearance</button>
+      <div class="scanner-scan-row">
+        <button class="btn btn-primary scanner-scan-btn" id="scanner-scan-btn" onclick="runScan(1)">&#128269; Scan Now</button>
+        <button class="btn btn-secondary" onclick="saveCurrentFilter()">&#128190; Save Filter</button>
+      </div>
+    </div>
+
+    <!-- Save Filter Inline Form -->
+    <div id="save-filter-form" class="save-filter-form" style="display:none">
+      <div class="scanner-controls" style="margin-top:0;padding-top:0">
+        <div class="scanner-block">
+          <label class="scanner-label">Filter Name</label>
+          <div class="scanner-zip-row">
+            <input type="text" id="filter-save-name" class="scanner-zip-input" style="width:220px;flex:1" placeholder="e.g. Tools 50%+ at Austin" />
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+              <input type="checkbox" id="filter-notify-tg" checked /> Telegram alerts
+            </label>
+            <button class="btn btn-primary btn-xs" onclick="confirmSaveFilter()">Save</button>
+            <button class="btn btn-ghost btn-xs" onclick="document.getElementById('save-filter-form').style.display='none'">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Saved Filters List -->
+    <div class="scanner-saved-section" id="scanner-saved-section" style="display:none">
+      <div class="scanner-saved-header">
+        <span class="scanner-label" style="margin:0">Saved Filters</span>
+      </div>
+      <div id="scanner-filters-list"></div>
     </div>
 
     <!-- Results -->
@@ -300,39 +328,77 @@
         <button class="btn-close" onclick="closeSettings()">&#10005;</button>
       </div>
 
+      <!-- Settings Tabs -->
+      <div class="stabs">
+        <button class="stab active" id="stab-btn-api"      onclick="switchSettingsTab('api')">&#128273; API Keys</button>
+        <button class="stab"        id="stab-btn-telegram" onclick="switchSettingsTab('telegram')">&#128225; Telegram</button>
+      </div>
+
       <div class="modal-body">
-        <div class="form-section">
-          <h3 class="section-title">eBay API</h3>
-          <p class="settings-help">
-            Required for eBay sold price lookups.
-            Get a free App ID at <a href="https://developer.ebay.com" target="_blank">developer.ebay.com</a>
-            &#8599; &rarr; Create App &rarr; copy the <strong>App ID (Client ID)</strong>.
-          </p>
-          <div class="form-group">
-            <label>App ID (Client ID)</label>
-            <div class="key-row">
-              <input type="password" id="setting-ebay-app-id" placeholder="YourApp-YourKey-here&hellip;" autocomplete="off" />
-              <button class="btn-eye" onclick="toggleKeyVis('setting-ebay-app-id', this)" title="Show/hide">&#128065;</button>
+
+        <!-- API Keys Tab -->
+        <div id="stab-api">
+          <div class="form-section">
+            <h3 class="section-title">eBay API</h3>
+            <p class="settings-help">
+              Required for eBay sold price lookups.
+              Get a free App ID at <a href="https://developer.ebay.com" target="_blank">developer.ebay.com</a>
+              &#8599; &rarr; Create App &rarr; copy the <strong>App ID (Client ID)</strong>.
+            </p>
+            <div class="form-group">
+              <label>App ID (Client ID)</label>
+              <div class="key-row">
+                <input type="password" id="setting-ebay-app-id" placeholder="YourApp-YourKey-here&hellip;" autocomplete="off" />
+                <button class="btn-eye" onclick="toggleKeyVis('setting-ebay-app-id', this)" title="Show/hide">&#128065;</button>
+              </div>
+              <div id="ebay-status" class="key-status"></div>
             </div>
-            <div id="ebay-status" class="key-status"></div>
+          </div>
+          <div class="form-section">
+            <h3 class="section-title">UPC Item DB</h3>
+            <p class="settings-help">
+              Used for barcode lookups. The <strong>free tier (100/day) works without a key</strong>.
+              Add a key from <a href="https://www.upcitemdb.com" target="_blank">upcitemdb.com</a> &#8599; for unlimited lookups.
+            </p>
+            <div class="form-group">
+              <label>API Key <span class="optional">(optional)</span></label>
+              <div class="key-row">
+                <input type="password" id="setting-upc-key" placeholder="Leave blank to use free tier" autocomplete="off" />
+                <button class="btn-eye" onclick="toggleKeyVis('setting-upc-key', this)" title="Show/hide">&#128065;</button>
+              </div>
+              <div id="upc-status" class="key-status"></div>
+            </div>
           </div>
         </div>
 
-        <div class="form-section">
-          <h3 class="section-title">UPC Item DB</h3>
-          <p class="settings-help">
-            Used for barcode lookups. The <strong>free tier (100/day) works without a key</strong>.
-            Add a key from <a href="https://www.upcitemdb.com" target="_blank">upcitemdb.com</a> &#8599; for unlimited lookups.
-          </p>
-          <div class="form-group">
-            <label>API Key <span class="optional">(optional)</span></label>
-            <div class="key-row">
-              <input type="password" id="setting-upc-key" placeholder="Leave blank to use free tier" autocomplete="off" />
-              <button class="btn-eye" onclick="toggleKeyVis('setting-upc-key', this)" title="Show/hide">&#128065;</button>
+        <!-- Telegram Tab -->
+        <div id="stab-telegram" style="display:none">
+          <div class="form-section">
+            <h3 class="section-title">Telegram Bot</h3>
+            <p class="settings-help">
+              Get deal alerts on your phone when scheduled scans find items.<br>
+              1. Message <strong>@BotFather</strong> on Telegram &rarr; <code>/newbot</code> &rarr; copy the token.<br>
+              2. Message <strong>@userinfobot</strong> to get your Chat ID.<br>
+              3. Start a chat with your bot first so it can message you.
+            </p>
+            <div class="form-group">
+              <label>Bot Token</label>
+              <div class="key-row">
+                <input type="password" id="setting-tg-token" placeholder="1234567890:ABCdef&hellip;" autocomplete="off" />
+                <button class="btn-eye" onclick="toggleKeyVis('setting-tg-token', this)" title="Show/hide">&#128065;</button>
+              </div>
+              <div id="tg-token-status" class="key-status"></div>
             </div>
-            <div id="upc-status" class="key-status"></div>
+            <div class="form-group">
+              <label>Chat ID</label>
+              <input type="text" id="setting-tg-chat-id" placeholder="Your user ID or group chat ID" autocomplete="off" />
+              <div id="tg-chat-status" class="key-status"></div>
+            </div>
+            <button class="btn btn-secondary" id="tg-test-btn" onclick="testTelegram()" style="margin-top:4px">Send Test Message</button>
+            <div id="tg-test-result" class="key-status" style="margin-top:6px"></div>
           </div>
         </div>
+
       </div>
 
       <div class="modal-footer">

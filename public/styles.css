@@ -1024,3 +1024,98 @@ textarea { resize: vertical; }
   font-size: 14px;
   color: var(--text-muted);
 }
+
+/* ── Settings Tabs ───────────────────────────────────────────────────────── */
+
+.stabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  background: var(--surface);
+}
+
+.stab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 12px 16px;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.stab:hover { color: var(--text); }
+.stab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Saved Filter Cards ──────────────────────────────────────────────────── */
+
+.scanner-saved-section {
+  max-width: 900px;
+  margin: 0 auto 24px;
+  padding: 0 24px;
+  width: 100%;
+}
+
+.scanner-saved-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0 10px;
+}
+
+.scanner-scan-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.save-filter-form {
+  max-width: 900px;
+  margin: -8px auto 0;
+  padding: 0 24px;
+  width: 100%;
+}
+
+.filter-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.filter-card-main { flex: 1; min-width: 0; }
+.filter-card-name { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
+.filter-card-meta { font-size: 12px; color: var(--text-muted); }
+.filter-card-sub  { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+
+.filter-card-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.filter-interval-sel {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+  outline: none;
+}
+.filter-interval-sel:focus { border-color: var(--accent); }
+.filter-interval-sel option { background: var(--surface2); }
+
+.filter-card-actions { display: flex; gap: 6px; }

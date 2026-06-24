@@ -56,6 +56,22 @@ const MIGRATIONS = [
 
   // v4 — quantity_sold: units sold so far (item fully sold when quantity_sold >= quantity)
   `ALTER TABLE items ADD COLUMN quantity_sold INTEGER DEFAULT 0`,
+
+  // v5 — saved scanner filters with optional schedule and Telegram alerts
+  `CREATE TABLE IF NOT EXISTS scanner_filters (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    name           TEXT NOT NULL,
+    store_id       TEXT NOT NULL,
+    store_name     TEXT DEFAULT '',
+    min_discount   INTEGER DEFAULT 40,
+    category       TEXT DEFAULT '',
+    interval_hours INTEGER DEFAULT 0,
+    notify_telegram INTEGER DEFAULT 1,
+    last_run       TEXT,
+    last_count     INTEGER DEFAULT 0,
+    enabled        INTEGER DEFAULT 1,
+    created_at     TEXT DEFAULT CURRENT_TIMESTAMP
+  )`,
 ];
 
 function runMigrations() {
@@ -95,21 +111,20 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 app.get('/api/settings', (req, res) => {
-  const keys = ['EBAY_APP_ID', 'UPC_API_KEY'];
+  const masked = ['EBAY_APP_ID', 'UPC_API_KEY', 'TELEGRAM_BOT_TOKEN'];
   const result = {};
-  for (const key of keys) {
-    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-    const val = (row && row.value) || '';
-    // Mask everything except last 4 chars so the UI can show "configured" state
+  for (const key of masked) {
+    const val = getSetting(key);
     result[key] = val
       ? { configured: true, preview: val.slice(-4).padStart(val.length, '•') }
       : { configured: false, preview: '' };
   }
+  result.TELEGRAM_CHAT_ID = getSetting('TELEGRAM_CHAT_ID');
   res.json(result);
 });
 
 app.post('/api/settings', (req, res) => {
-  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME'];
+  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -421,35 +436,107 @@ app.get('/api/lookup/ebay/lowest', async (req, res) => {
   }
 });
 
-// ── Lowe's Scanner ───────────────────────────────────────────────────────────
+// ── Telegram ─────────────────────────────────────────────────────────────────
 
-const LOWES_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Accept-Encoding': 'gzip, deflate, br',
-  'Cache-Control': 'no-cache',
-  'Pragma': 'no-cache',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
-  'Sec-Fetch-User': '?1',
-  'Upgrade-Insecure-Requests': '1',
-};
+async function sendTelegram(text) {
+  const token  = getSetting('TELEGRAM_BOT_TOKEN');
+  const chatId = getSetting('TELEGRAM_CHAT_ID');
+  if (!token || !chatId) return { ok: false, error: 'not configured' };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+    });
+    return await r.json();
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
 
-const LOWES_API_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Origin': 'https://www.lowes.com',
-  'Referer': 'https://www.lowes.com/',
-};
+app.post('/api/telegram/test', async (req, res) => {
+  const result = await sendTelegram('✅ <b>Resell Tracker</b> — Telegram is connected! You\'ll get alerts here when scheduled scans find deals.');
+  if (result.ok) res.json({ ok: true });
+  else res.status(400).json({ ok: false, error: result.description || result.error || 'Failed' });
+});
 
-async function lowesGet(url, headers = LOWES_HEADERS) {
-  const res = await fetch(url, { headers, redirect: 'follow' });
-  if (res.status === 403) throw new Error('BLOCKED');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res;
+// ── Scanner Filters ───────────────────────────────────────────────────────────
+
+app.get('/api/scanner/filters', (req, res) => {
+  res.json(db.prepare('SELECT * FROM scanner_filters ORDER BY created_at DESC').all());
+});
+
+app.post('/api/scanner/filters', (req, res) => {
+  const { name, store_id, store_name, min_discount, category, interval_hours, notify_telegram } = req.body;
+  if (!name || !store_id) return res.status(400).json({ error: 'name and store_id required' });
+  const r = db.prepare(`
+    INSERT INTO scanner_filters (name, store_id, store_name, min_discount, category, interval_hours, notify_telegram)
+    VALUES (@name, @store_id, @store_name, @min_discount, @category, @interval_hours, @notify_telegram)
+  `).run({ name, store_id, store_name: store_name || '', min_discount: min_discount || 40, category: category || '', interval_hours: interval_hours || 0, notify_telegram: notify_telegram ?? 1 });
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
+app.put('/api/scanner/filters/:id', (req, res) => {
+  const { name, store_id, store_name, min_discount, category, interval_hours, notify_telegram, enabled } = req.body;
+  db.prepare(`
+    UPDATE scanner_filters SET
+      name=@name, store_id=@store_id, store_name=@store_name,
+      min_discount=@min_discount, category=@category,
+      interval_hours=@interval_hours, notify_telegram=@notify_telegram, enabled=@enabled
+    WHERE id=@id
+  `).run({ id: req.params.id, name, store_id, store_name: store_name || '', min_discount: min_discount || 40, category: category || '', interval_hours: interval_hours || 0, notify_telegram: notify_telegram ?? 1, enabled: enabled ?? 1 });
+  res.json({ ok: true });
+});
+
+app.delete('/api/scanner/filters/:id', (req, res) => {
+  db.prepare('DELETE FROM scanner_filters WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/scanner/filters/:id/run', async (req, res) => {
+  const filter = db.prepare('SELECT * FROM scanner_filters WHERE id=?').get(req.params.id);
+  if (!filter) return res.status(404).json({ error: 'Not found' });
+  const result = await runFilterScan(filter, true);
+  res.json(result);
+});
+
+// ── Lowe's Scraper (Puppeteer) ────────────────────────────────────────────────
+
+const puppeteer = require('puppeteer-core');
+const LOWES_UA  = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const CHROMIUM  = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
+
+let _browser = null;
+
+async function getBrowser() {
+  if (_browser) {
+    try { await _browser.pages(); return _browser; } catch { _browser = null; }
+  }
+  _browser = await puppeteer.launch({
+    executablePath: CHROMIUM,
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process'],
+  });
+  return _browser;
+}
+
+process.on('exit', () => { if (_browser) _browser.close().catch(() => {}); });
+
+async function scrapeLowesPage(url, storeId = '') {
+  const browser = await getBrowser();
+  const page    = await browser.newPage();
+  try {
+    await page.setUserAgent(LOWES_UA);
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+    if (storeId) {
+      await page.setCookie({ name: 'sn', value: String(storeId), domain: '.lowes.com', path: '/' });
+    }
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.waitForFunction(() => !!document.getElementById('__NEXT_DATA__'), { timeout: 15000 }).catch(() => {});
+    return await page.content();
+  } finally {
+    await page.close().catch(() => {});
+  }
 }
 
 function extractNextData(html) {
@@ -504,76 +591,58 @@ function parseProducts(nextData, minDiscount) {
   return { products: out, total: products.length };
 }
 
-// Store search by ZIP
+// Store search — use Puppeteer to bypass bot detection
 app.get('/api/lowes/stores', async (req, res) => {
   const { zip } = req.query;
   if (!zip) return res.status(400).json({ error: 'zip required' });
-
-  const endpoints = [
-    `https://www.lowes.com/store/api/search?q=${encodeURIComponent(zip)}&count=10`,
-    `https://www.lowes.com/store/v1/stores?q=${encodeURIComponent(zip)}&maxStores=10`,
-  ];
-
-  for (const url of endpoints) {
-    try {
-      const r = await lowesGet(url, LOWES_API_HEADERS);
-      const data = await r.json();
-      const raw = data.stores ?? data.results ?? data.data?.stores ?? [];
-      if (!raw.length) continue;
-      const stores = raw.map(s => ({
-        id:       String(s.storeId ?? s.id ?? s.store_id ?? ''),
-        name:     s.storeName ?? s.name ?? s.description ?? '',
-        address:  s.address?.address1 ?? s.streetAddress ?? '',
-        city:     s.address?.city ?? s.city ?? '',
-        state:    s.address?.state ?? s.state ?? '',
-        zip:      s.address?.zipCode ?? s.postalCode ?? '',
-        distance: s.distance ?? null,
-        phone:    s.phone ?? s.phoneNumber ?? null,
-      })).filter(s => s.id);
-      return res.json({ stores });
-    } catch (err) {
-      if (err.message === 'BLOCKED') return res.status(502).json({ error: 'BLOCKED', message: 'Lowe\'s is blocking requests. Try again later or from a different network.' });
+  try {
+    const html = await scrapeLowesPage(`https://www.lowes.com/store/search?searchString=${encodeURIComponent(zip)}`);
+    const nextData = extractNextData(html);
+    const raw = dig(nextData,
+      'props.pageProps.stores',
+      'props.pageProps.data.stores',
+      'props.pageProps.initialData.stores'
+    ) || [];
+    if (!Array.isArray(raw) || !raw.length) {
+      return res.status(502).json({ error: 'STORE_SEARCH_FAILED', message: 'No stores found. Enter your store number manually (find it on lowes.com → Store Details URL).' });
     }
+    const stores = raw.map(s => ({
+      id:       String(s.storeId ?? s.id ?? ''),
+      name:     s.storeName ?? s.name ?? '',
+      address:  s.address?.address1 ?? s.streetAddress ?? '',
+      city:     s.address?.city ?? s.city ?? '',
+      state:    s.address?.state ?? s.state ?? '',
+      zip:      s.address?.zipCode ?? s.postalCode ?? '',
+      distance: s.distance ?? null,
+    })).filter(s => s.id);
+    res.json({ stores });
+  } catch (err) {
+    res.status(500).json({ error: err.message, message: 'Store search failed. Enter your store number manually.' });
   }
-
-  res.status(502).json({ error: 'STORE_SEARCH_FAILED', message: 'Could not reach Lowe\'s store search. Try entering your store ID manually.' });
 });
 
-// Clearance scan
+// Core clearance scan function (shared by API endpoint and scheduler)
+async function runLowesCleared(storeId, minDiscount, category, page) {
+  const offset  = (page - 1) * 48;
+  const catPath = category ? `clearance-${category}` : 'clearance-items';
+  const url     = `https://www.lowes.com/l/sale/${catPath}?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`;
+  const html    = await scrapeLowesPage(url, storeId);
+  const nextData = extractNextData(html);
+  return parseProducts(nextData, minDiscount);
+}
+
+// Clearance scan API endpoint
 app.get('/api/lowes/clearance', async (req, res) => {
   const { storeId, minDiscount = 30, page = 1, category = '' } = req.query;
   if (!storeId) return res.status(400).json({ error: 'storeId required' });
-
-  const offset = (parseInt(page) - 1) * 48;
-  const catPath = category ? `clearance-${category}` : 'clearance-items';
-  const url = `https://www.lowes.com/l/sale/${catPath}?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`;
-
   try {
-    const r = await lowesGet(url, { ...LOWES_HEADERS, 'Cookie': `sn=${storeId}; akamai_generated_bot_manager_page=1` });
-    const html = await r.text();
-
-    let nextData;
-    try {
-      nextData = extractNextData(html);
-    } catch {
-      // If no __NEXT_DATA__, page may be blocked or CAPTCHA
-      const blocked = html.includes('captcha') || html.includes('Access Denied') || html.includes('robot');
-      return res.status(502).json({
-        error: blocked ? 'BLOCKED' : 'NO_NEXT_DATA',
-        message: blocked
-          ? 'Lowe\'s served a CAPTCHA or bot check. Try opening lowes.com in your browser first, then retry.'
-          : 'Could not parse Lowe\'s page structure. The site layout may have changed.',
-        url,
-      });
-    }
-
-    const result = parseProducts(nextData, parseFloat(minDiscount));
+    const result = await runLowesCleared(storeId, parseFloat(minDiscount), category, parseInt(page));
     res.json({ ...result, page: parseInt(page), store_id: storeId });
   } catch (err) {
-    if (err.message === 'BLOCKED') {
-      return res.status(502).json({ error: 'BLOCKED', message: 'Lowe\'s blocked the request. Residential IP usually works — try from Umbrel directly.' });
-    }
-    res.status(500).json({ error: err.message });
+    const msg = err.message.includes('NO_NEXT_DATA')
+      ? 'Could not parse Lowe\'s page. The site layout may have changed.'
+      : err.message;
+    res.status(500).json({ error: err.message, message: msg });
   }
 });
 
@@ -585,6 +654,50 @@ app.get('/api/lowes/settings', (req, res) => {
   });
 });
 
+// ── Filter Runner + Scheduler ─────────────────────────────────────────────────
+
+async function runFilterScan(filter, sendAlert = false) {
+  try {
+    const result = await runLowesCleared(filter.store_id, filter.min_discount, filter.category || '', 1);
+    const count  = result.products?.length || 0;
+
+    db.prepare(`UPDATE scanner_filters SET last_run=CURRENT_TIMESTAMP, last_count=? WHERE id=?`)
+      .run(count, filter.id);
+
+    if (sendAlert && count > 0 && filter.notify_telegram) {
+      const top = (result.products || []).slice(0, 5)
+        .map(p => `• ${p.name} — <b>${p.discount_pct}% OFF</b> → ${p.now_price ? '$' + p.now_price.toFixed(2) : '?'} (was ${p.was_price ? '$' + p.was_price.toFixed(2) : '?'})`)
+        .join('\n');
+      const msg = `🏪 <b>Lowe's Clearance Alert</b>\nFilter: ${filter.name}\nStore: ${filter.store_name || filter.store_id}\nFound <b>${count}</b> items at ${filter.min_discount}%+ off\n\n${top}\n\nOpen Resell Tracker to add items to your inventory.`;
+      await sendTelegram(msg);
+    }
+
+    return { ok: true, count, products: result.products };
+  } catch (err) {
+    console.error(`Filter scan failed [${filter.name}]:`, err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+async function runScheduledScans() {
+  const now     = Date.now();
+  const filters = db.prepare("SELECT * FROM scanner_filters WHERE enabled=1 AND interval_hours > 0").all();
+  for (const f of filters) {
+    const lastRun    = f.last_run ? new Date(f.last_run).getTime() : 0;
+    const hoursSince = (now - lastRun) / 3600000;
+    if (hoursSince >= f.interval_hours) {
+      console.log(`Running scheduled scan: ${f.name}`);
+      await runFilterScan(f, true);
+    }
+  }
+}
+
+// Start scheduler — first check 2 minutes after boot, then every 15 minutes
+setTimeout(() => {
+  runScheduledScans();
+  setInterval(runScheduledScans, 15 * 60 * 1000);
+}, 2 * 60 * 1000);
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.1 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.2 running on port ${PORT}`);
 });
