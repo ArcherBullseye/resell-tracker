@@ -790,5 +790,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.5 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.6 running on port ${PORT}`);
 });
