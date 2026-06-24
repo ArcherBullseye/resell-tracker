@@ -535,9 +535,17 @@ async function scrapeLowesPage(url, storeId = '') {
     if (storeId) {
       await page.setCookie({ name: 'sn', value: String(storeId), domain: '.lowes.com', path: '/' });
     }
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    await page.waitForFunction(() => !!document.getElementById('__NEXT_DATA__'), { timeout: 15000 }).catch(() => {});
-    return await page.content();
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+    // Wait up to 10s for __NEXT_DATA__ to appear in the DOM
+    await page.waitForFunction(
+      () => !!document.getElementById('__NEXT_DATA__'),
+      { timeout: 10000 }
+    ).catch(() => {});
+    const html = await page.content();
+    // Log snippet for debugging
+    const snippet = html.slice(0, 300).replace(/\s+/g, ' ');
+    console.log(`[Lowe's] url=${url} html_len=${html.length} snippet: ${snippet}`);
+    return html;
   } finally {
     await page.close().catch(() => {});
   }
@@ -569,7 +577,11 @@ function parseProducts(nextData, minDiscount) {
     'props.pageProps.initialData.products',
     'props.pageProps.products'
   );
-  if (!Array.isArray(products)) return { products: [], total: 0, raw_keys: Object.keys(nextData?.props?.pageProps || {}) };
+  if (!Array.isArray(products)) {
+    const keys = Object.keys(nextData?.props?.pageProps || {});
+    console.warn('[Lowe\'s] parseProducts: no products array found. pageProps keys:', keys);
+    return { products: [], total: 0, raw_keys: keys };
+  }
 
   const out = products
     .map(p => {
@@ -628,11 +640,28 @@ app.get('/api/lowes/stores', async (req, res) => {
 // Core clearance scan function (shared by API endpoint and scheduler)
 async function runLowesCleared(storeId, minDiscount, category, page) {
   const offset  = (page - 1) * 48;
-  const catPath = category ? `clearance-${category}` : 'clearance-items';
-  const url     = `https://www.lowes.com/l/sale/${catPath}?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`;
-  const html    = await scrapeLowesPage(url, storeId);
-  const nextData = extractNextData(html);
-  return parseProducts(nextData, minDiscount);
+  // Try multiple URL patterns — Lowe's has changed these before
+  const catSuffix = category ? `-${category}` : '';
+  const urls = [
+    `https://www.lowes.com/l/sale/clearance${catSuffix}?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`,
+    `https://www.lowes.com/l/sale/clearance-items?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`,
+    `https://www.lowes.com/pl/Clearance/4294967118?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}`,
+  ];
+
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      const html = await scrapeLowesPage(url, storeId);
+      const nextData = extractNextData(html);
+      const result = parseProducts(nextData, minDiscount);
+      // include raw_keys in result so UI can show what came back if products empty
+      return result;
+    } catch (err) {
+      console.warn(`[Lowe's] URL failed (${url}): ${err.message}`);
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 // Clearance scan API endpoint
@@ -643,10 +672,13 @@ app.get('/api/lowes/clearance', async (req, res) => {
     const result = await runLowesCleared(storeId, parseFloat(minDiscount), category, parseInt(page));
     res.json({ ...result, page: parseInt(page), store_id: storeId });
   } catch (err) {
-    const msg = err.message.includes('NO_NEXT_DATA')
-      ? 'Could not parse Lowe\'s page. The site layout may have changed.'
-      : err.message;
-    res.status(500).json({ error: err.message, message: msg });
+    const isNoData = err.message.includes('NO_NEXT_DATA');
+    res.status(500).json({
+      error: err.message,
+      message: isNoData
+        ? 'Lowe\'s page loaded but no product data found. The URL format may have changed — check server logs for the snippet.'
+        : err.message,
+    });
   }
 });
 
@@ -703,5 +735,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.3 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.4 running on port ${PORT}`);
 });
