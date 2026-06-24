@@ -97,6 +97,16 @@ function renderCard(item) {
     ? `<div class="platform-chip">🏪 ${esc(item.selling_platform)}</div>`
     : '';
 
+  let daysHtml = '';
+  if (item.buy_date) {
+    const start = new Date(item.buy_date);
+    const end   = item.sell_date ? new Date(item.sell_date) : new Date();
+    const days  = Math.round((end - start) / 86400000);
+    const dayCls = days < 30 ? 'days-green' : days <= 90 ? 'days-yellow' : 'days-red';
+    const label  = item.status === 'sold' ? `${days}d to sell` : `${days}d in stock`;
+    daysHtml = `<span class="days-badge ${dayCls}">${label}</span>`;
+  }
+
   return `
     <div class="item-card">
       ${imgHtml}
@@ -122,7 +132,10 @@ function renderCard(item) {
         </div>
         ${ebayHint}
         ${profitHtml}
-        ${platformHtml}
+        <div class="platform-row">
+          ${platformHtml}
+          ${daysHtml}
+        </div>
         <div class="item-actions">
           <button class="btn btn-secondary" onclick="openModal('edit', ${item.id})">Edit</button>
           ${item.status !== 'sold' ? `<button class="btn btn-sell" onclick="openSellModal(${item.id}, '${esc(item.name)}', ${item.buy_price || 0})">Sell</button>` : ''}

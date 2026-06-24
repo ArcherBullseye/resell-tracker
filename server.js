@@ -136,9 +136,21 @@ app.post('/api/settings', (req, res) => {
 
 app.get('/api/items', (req, res) => {
   const { status } = req.query;
-  const rows = status
-    ? db.prepare('SELECT * FROM items WHERE status = ? ORDER BY created_at DESC').all(status)
-    : db.prepare('SELECT * FROM items ORDER BY created_at DESC').all();
+  let rows;
+  if (status === 'inventory') {
+    rows = db.prepare('SELECT * FROM items WHERE status = ? ORDER BY buy_date DESC, created_at DESC').all(status);
+  } else if (status === 'sold') {
+    rows = db.prepare('SELECT * FROM items WHERE status = ? ORDER BY sell_date DESC, created_at DESC').all(status);
+  } else {
+    // All items: inventory first, each group sorted by its relevant date
+    rows = db.prepare(`
+      SELECT * FROM items
+      ORDER BY
+        CASE WHEN status = 'inventory' THEN 0 ELSE 1 END ASC,
+        CASE WHEN status = 'inventory' THEN buy_date ELSE sell_date END DESC,
+        created_at DESC
+    `).all();
+  }
   res.json(rows);
 });
 
@@ -381,5 +393,5 @@ app.get('/api/lookup/ebay', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.1.1 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.1.2 running on port ${PORT}`);
 });
