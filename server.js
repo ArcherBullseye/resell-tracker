@@ -513,11 +513,12 @@ puppeteerExtra.use(StealthPlugin());
 const LOWES_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const CHROMIUM = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
 
-let _browser = null;
+let _browser        = null;
+let _lowesWarmedUp  = false;
 
 async function getBrowser() {
   if (_browser) {
-    try { await _browser.pages(); return _browser; } catch { _browser = null; }
+    try { await _browser.pages(); return _browser; } catch { _browser = null; _lowesWarmedUp = false; }
   }
   _browser = await puppeteerExtra.launch({
     executablePath: CHROMIUM,
@@ -535,16 +536,35 @@ async function getBrowser() {
   return _browser;
 }
 
+// Visit Lowe's homepage first so Akamai sets trust cookies before hitting product pages
+async function warmUpLowes(browser, log = noop) {
+  if (_lowesWarmedUp) return;
+  log('Warming up session on lowes.com (Akamai trust cookies)…');
+  const page = await browser.newPage();
+  try {
+    await page.setUserAgent(LOWES_UA);
+    await page.goto('https://www.lowes.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Brief pause so Akamai fingerprinting scripts can run
+    await new Promise(r => setTimeout(r, 3000));
+    _lowesWarmedUp = true;
+    log('Session ready — Akamai cookies set', 'success');
+  } catch (e) {
+    log(`Warm-up warning: ${e.message}`, 'warn');
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 process.on('exit', () => { if (_browser) _browser.close().catch(() => {}); });
 
 const noop = () => {};
 
 async function scrapeLowesPage(url, storeId = '', log = noop) {
   const browser = await getBrowser();
-  const page    = await browser.newPage();
+  await warmUpLowes(browser, log);
+
+  const page = await browser.newPage();
   try {
-    log(`Opening URL: ${url}`);
-    // Mask webdriver flag before any page load
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
@@ -557,17 +577,30 @@ async function scrapeLowesPage(url, storeId = '', log = noop) {
     if (storeId) {
       await page.setCookie({ name: 'sn', value: String(storeId), domain: '.lowes.com', path: '/' });
     }
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    log('Page navigated — waiting for product data…');
+
+    log(`Opening URL: ${url}`);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    log('Page loaded — waiting for product data…');
+
     const found = await page.waitForFunction(
       () => !!document.getElementById('__NEXT_DATA__'),
-      { timeout: 10000 }
+      { timeout: 15000 }
     ).then(() => true).catch(() => false);
 
     const html    = await page.content();
-    const snippet = html.slice(0, 400).replace(/\s+/g, ' ');
-    log(`Page loaded — ${html.length.toLocaleString()} bytes${found ? ', __NEXT_DATA__ found' : ', __NEXT_DATA__ NOT found'}`, found ? 'info' : 'warn');
-    if (!found) log(`Page preview: ${snippet}`, 'detail');
+    const byteLen = html.length;
+
+    // Detect immediate Akamai block (tiny page, no __NEXT_DATA__)
+    if (!found && byteLen < 2000) {
+      const snippet = html.replace(/\s+/g, ' ').slice(0, 400);
+      log(`Blocked — ${byteLen} bytes. Preview: ${snippet}`, 'warn');
+      // Force re-warm on next attempt
+      _lowesWarmedUp = false;
+      throw new Error('AKAMAI_BLOCK');
+    }
+
+    log(`Page loaded — ${byteLen.toLocaleString()} bytes${found ? ', data found ✓' : ', no data'}`, found ? 'info' : 'warn');
+    if (!found) log(`Preview: ${html.replace(/\s+/g, ' ').slice(0, 400)}`, 'detail');
     return html;
   } finally {
     await page.close().catch(() => {});
@@ -686,12 +719,14 @@ async function runLowesCleared(storeId, minDiscount, category, page, log = noop)
       const result   = parseProducts(nextData, minDiscount, log);
       return result;
     } catch (err) {
-      const detail = err.message === 'NO_NEXT_DATA'
-        ? 'No product data in page (Lowe\'s may have served a bot-check or the URL format changed)'
+      const detail = err.message === 'AKAMAI_BLOCK'
+        ? 'Akamai bot check blocked the request — re-warming session for next attempt'
+        : err.message === 'NO_NEXT_DATA'
+        ? 'Page loaded but no product data found (site layout may have changed)'
         : err.message;
       log(`URL ${i + 1} failed: ${detail}`, 'warn');
       lastErr = err;
-      if (i < urls.length - 1) log(`Trying next URL pattern…`);
+      if (i < urls.length - 1) log('Trying next URL pattern…');
     }
   }
 
@@ -727,9 +762,10 @@ app.get('/api/lowes/clearance-stream', async (req, res) => {
     const result = await runLowesCleared(storeId, parseFloat(minDiscount), category, parseInt(page), log);
     send('result', { ...result, page: parseInt(page), store_id: storeId });
   } catch (err) {
-    const isNoData = err.message === 'NO_NEXT_DATA';
-    const detail = isNoData
-      ? 'Lowe\'s returned a page without product data. They may be serving a bot-check page, or their URL structure changed.'
+    const detail = err.message === 'AKAMAI_BLOCK'
+      ? 'Lowe\'s (Akamai) blocked the headless browser. Session will re-warm automatically — try scanning again in a few seconds.'
+      : err.message === 'NO_NEXT_DATA'
+      ? 'Page loaded but no product data found. The Lowe\'s page structure may have changed.'
       : err.message;
     log(`Scan failed: ${detail}`, 'error');
     send('error', { message: detail, raw: err.message });
@@ -809,5 +845,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.8 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.9 running on port ${PORT}`);
 });
