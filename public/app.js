@@ -544,7 +544,7 @@ let scannerStoreName = '';
 
 async function openScanner() {
   document.getElementById('scanner-panel').style.display = 'flex';
-  document.getElementById('app').style.display = 'none';
+  document.body.style.overflow = 'hidden';
 
   const saved = await api('/api/lowes/settings');
   if (saved.storeId) setScannerStore(saved.storeId, saved.storeName || `Store #${saved.storeId}`);
@@ -553,8 +553,13 @@ async function openScanner() {
 }
 
 function closeScanner() {
+  if (_activeScanSource) { _activeScanSource.close(); _activeScanSource = null; }
   document.getElementById('scanner-panel').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
+  document.body.style.overflow = '';
+}
+
+function scannerCloseOnBackdrop(e) {
+  if (e.target === document.getElementById('scanner-panel')) closeScanner();
 }
 
 function setScannerStore(id, name) {
@@ -644,6 +649,8 @@ function runScan(page = 1) {
   paginEl.style.display = 'none';
   linesEl.innerHTML     = '';
   consoleEl.style.display = 'block';
+  const emptyEl = document.getElementById('scanner-empty-state');
+  if (emptyEl) emptyEl.style.display = 'none';
   scanBtn.disabled = true;
 
   const params = new URLSearchParams({ storeId: scannerStoreId, minDiscount, page, category });
@@ -760,21 +767,15 @@ async function loadSavedFilters() {
 
 function renderFilterCard(f) {
   const lastRun = f.last_run ? fmtDate(f.last_run.split(' ')[0]) : 'Never';
-  const schedLabel = f.interval_hours > 0 ? `Every ${f.interval_hours}h` : 'Manual';
   return `
     <div class="filter-card" id="filter-card-${f.id}">
-      <div class="filter-card-main">
-        <div class="filter-card-name">${esc(f.name)}</div>
-        <div class="filter-card-meta">
-          ${esc(f.store_name || f.store_id)} &middot; ${f.min_discount}%+ off
-          ${f.category ? ' &middot; ' + esc(f.category) : ''}
-        </div>
-        <div class="filter-card-sub">
-          Last run: ${lastRun}${f.last_count ? ` (${f.last_count} items)` : ''}
-          &middot; ${f.notify_telegram ? '&#128225; Telegram on' : 'No alert'}
-        </div>
+      <div class="filter-card-top">
+        <span class="filter-card-name">${esc(f.name)}</span>
+        <button class="btn-icon-tiny" onclick="deleteSavedFilter(${f.id})" title="Delete">&#128465;</button>
       </div>
-      <div class="filter-card-right">
+      <div class="filter-card-meta">${f.min_discount}%+ off${f.category ? ' · ' + esc(f.category) : ''}</div>
+      <div class="filter-card-sub">Last: ${lastRun}${f.last_count ? ` · ${f.last_count} items` : ''}${f.notify_telegram ? ' · &#128225;' : ''}</div>
+      <div class="filter-card-bottom">
         <select class="filter-interval-sel" onchange="updateFilterInterval(${f.id}, this.value)">
           <option value="0"  ${f.interval_hours===0  ?'selected':''}>Manual</option>
           <option value="2"  ${f.interval_hours===2  ?'selected':''}>Every 2h</option>
@@ -783,11 +784,8 @@ function renderFilterCard(f) {
           <option value="12" ${f.interval_hours===12 ?'selected':''}>Every 12h</option>
           <option value="24" ${f.interval_hours===24 ?'selected':''}>Every 24h</option>
         </select>
-        <div class="filter-card-actions">
-          <button class="btn btn-secondary btn-xs" onclick="runSavedFilter(${f.id})">&#9654; Run</button>
-          <button class="btn btn-ghost btn-xs" onclick="loadFilterIntoScanner(${f.id}, '${esc(f.store_id)}', '${esc(f.store_name)}', ${f.min_discount}, '${esc(f.category)}')">Load</button>
-          <button class="btn btn-danger btn-xs" onclick="deleteSavedFilter(${f.id})">&#128465;</button>
-        </div>
+        <button class="btn btn-ghost btn-xs" onclick="loadFilterIntoScanner(${f.id}, '${esc(f.store_id)}', '${esc(f.store_name)}', ${f.min_discount}, '${esc(f.category)}')">Load</button>
+        <button class="btn btn-secondary btn-xs" onclick="runSavedFilter(${f.id})">&#9654; Run</button>
       </div>
     </div>`;
 }
