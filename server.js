@@ -506,9 +506,12 @@ app.post('/api/scanner/filters/:id/run', async (req, res) => {
 
 // ── Lowe's Scraper (Puppeteer) ────────────────────────────────────────────────
 
-const puppeteer = require('puppeteer-core');
-const LOWES_UA  = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const CHROMIUM  = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
+const puppeteerExtra = require('puppeteer-extra');
+const StealthPlugin  = require('puppeteer-extra-plugin-stealth');
+puppeteerExtra.use(StealthPlugin());
+
+const LOWES_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const CHROMIUM = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
 
 let _browser = null;
 
@@ -516,10 +519,18 @@ async function getBrowser() {
   if (_browser) {
     try { await _browser.pages(); return _browser; } catch { _browser = null; }
   }
-  _browser = await puppeteer.launch({
+  _browser = await puppeteerExtra.launch({
     executablePath: CHROMIUM,
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--single-process'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-blink-features=AutomationControlled',
+      '--window-size=1280,800',
+    ],
+    defaultViewport: { width: 1280, height: 800 },
   });
   return _browser;
 }
@@ -533,8 +544,16 @@ async function scrapeLowesPage(url, storeId = '', log = noop) {
   const page    = await browser.newPage();
   try {
     log(`Opening URL: ${url}`);
+    // Mask webdriver flag before any page load
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
     await page.setUserAgent(LOWES_UA);
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Upgrade-Insecure-Requests': '1',
+    });
     if (storeId) {
       await page.setCookie({ name: 'sn', value: String(storeId), domain: '.lowes.com', path: '/' });
     }
@@ -790,5 +809,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.6 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.7 running on port ${PORT}`);
 });
