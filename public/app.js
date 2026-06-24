@@ -1,6 +1,9 @@
 let currentTab = 'all';
 let deleteTargetId = null;
 let modalDeleteId = null;
+let allItemsCache = [];
+let searchDebounce = null;
+let lastSearchLookup = null;
 
 const PLATFORM_FEES = {
   'eBay': 13.25, 'Mercari': 3, 'Facebook Marketplace': 0,
@@ -13,6 +16,7 @@ const PLATFORM_FEES = {
 document.addEventListener('DOMContentLoaded', () => {
   loadStats();
   loadItems();
+  initSearch();
 
   // Recalculate profit preview when prices change
   ['sell-price', 'buy-price', 'shipping-cost'].forEach(id => {
@@ -48,6 +52,13 @@ async function loadItems(tab) {
   if (tab) currentTab = tab;
   const status = currentTab === 'all' ? '' : currentTab;
   const items = await api('/api/items' + (status ? `?status=${status}` : ''));
+
+  if (!status) {
+    allItemsCache = items;
+  } else {
+    // keep cache fresh even when viewing a filtered tab
+    api('/api/items').then(all => { allItemsCache = all; });
+  }
 
   const grid = document.getElementById('items-grid');
   const empty = document.getElementById('empty-state');
@@ -471,6 +482,165 @@ async function confirmDelete() {
   toast('Item deleted', 'success');
   loadStats();
   loadItems();
+}
+
+// ── Global Search ─────────────────────────────────────────────────────────────
+
+function initSearch() {
+  const input = document.getElementById('global-search');
+  const wrap  = document.getElementById('search-wrap');
+
+  input.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    const q = input.value.trim();
+    if (!q) { closeSearch(); return; }
+    searchDebounce = setTimeout(() => performSearch(q), 160);
+  });
+
+  input.addEventListener('focus', () => {
+    const q = input.value.trim();
+    if (q) performSearch(q);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeSearch(); input.blur(); }
+  });
+
+  document.addEventListener('click', e => {
+    if (!wrap.contains(e.target)) closeSearch();
+  });
+}
+
+async function performSearch(q) {
+  const lower = q.toLowerCase();
+
+  if (!allItemsCache.length) {
+    allItemsCache = await api('/api/items');
+  }
+
+  const matches = allItemsCache.filter(item =>
+    (item.name        && item.name.toLowerCase().includes(lower)) ||
+    (item.barcode     && item.barcode.toLowerCase().includes(lower)) ||
+    (item.description && item.description.toLowerCase().includes(lower)) ||
+    (item.category    && item.category.toLowerCase().includes(lower)) ||
+    (item.notes       && item.notes.toLowerCase().includes(lower))
+  );
+
+  const inventory = matches.filter(i => i.status !== 'sold');
+  const sold      = matches.filter(i => i.status === 'sold');
+
+  const dd = document.getElementById('search-dropdown');
+  let html = `
+    <div class="sr-lookup" onclick="openSearchLookup('${esc(q)}')">
+      <span class="sr-lookup-icon">&#128269;</span>
+      <div class="sr-lookup-text">
+        <div class="sr-lookup-title">Look up "<strong>${esc(q)}</strong>"</div>
+        <div class="sr-lookup-sub">UPC database &middot; eBay sold prices</div>
+      </div>
+      <span class="sr-arrow">&#8250;</span>
+    </div>`;
+
+  if (inventory.length) {
+    html += `<div class="sr-label">In Inventory (${inventory.length})</div>`;
+    html += inventory.slice(0, 6).map(renderSearchRow).join('');
+  }
+  if (sold.length) {
+    html += `<div class="sr-label">Sold (${sold.length})</div>`;
+    html += sold.slice(0, 4).map(renderSearchRow).join('');
+  }
+  if (!inventory.length && !sold.length) {
+    html += `<div class="sr-empty">No tracked items match</div>`;
+  }
+
+  dd.innerHTML = html;
+  dd.style.display = 'block';
+}
+
+function renderSearchRow(item) {
+  const thumb = item.image_url
+    ? `<img class="sr-thumb" src="${esc(item.image_url)}" onerror="this.style.display='none'" />`
+    : `<div class="sr-thumb-ph">&#128230;</div>`;
+  const price = item.sell_price ? fmt(item.sell_price) : (item.buy_price ? fmt(item.buy_price) : '—');
+  const date  = item.buy_date ? fmtDate(item.buy_date) : '';
+  const badgeCls = item.status === 'sold' ? 'sr-badge-sold' : 'sr-badge-inv';
+  const badgeTxt = item.status === 'sold' ? 'Sold' : 'Inventory';
+  return `
+    <div class="sr-item" onclick="closeSearch(); openModal('edit', ${item.id})">
+      ${thumb}
+      <div class="sr-item-body">
+        <div class="sr-item-name">${esc(item.name)}</div>
+        <div class="sr-item-meta">${price}${date ? ' &middot; ' + date : ''}</div>
+      </div>
+      <span class="sr-badge ${badgeCls}">${badgeTxt}</span>
+    </div>`;
+}
+
+function closeSearch() {
+  document.getElementById('search-dropdown').style.display = 'none';
+}
+
+async function openSearchLookup(q) {
+  closeSearch();
+  document.getElementById('global-search').value = '';
+
+  document.getElementById('sm-query').textContent = q;
+  document.getElementById('sm-upc-body').innerHTML  = '<div class="sm-loading">Looking up product…</div>';
+  document.getElementById('sm-ebay-body').innerHTML = '<div class="sm-loading">Fetching eBay prices…</div>';
+  document.getElementById('search-modal').style.display = 'flex';
+  lastSearchLookup = null;
+
+  const [upcRes, ebayRes] = await Promise.all([
+    api(`/api/lookup/barcode?upc=${encodeURIComponent(q)}`).catch(() => null),
+    api(`/api/lookup/ebay?q=${encodeURIComponent(q)}`).catch(() => null)
+  ]);
+
+  // UPC / product info
+  if (upcRes && upcRes.found) {
+    lastSearchLookup = upcRes;
+    document.getElementById('sm-upc-body').innerHTML = `
+      ${upcRes.image_url ? `<img class="sm-product-img" src="${esc(upcRes.image_url)}" />` : ''}
+      <div class="sm-product-name">${esc(upcRes.name || q)}</div>
+      ${upcRes.brand    ? `<div class="sm-product-meta"><span>Brand</span> ${esc(upcRes.brand)}</div>` : ''}
+      ${upcRes.category ? `<div class="sm-product-meta"><span>Category</span> ${esc(upcRes.category)}</div>` : ''}
+      ${upcRes.description ? `<div class="sm-product-desc">${esc(upcRes.description)}</div>` : ''}
+      <button class="btn btn-primary" style="margin-top:14px;width:100%" onclick="prefillFromSearchLookup()">+ Add to Inventory</button>`;
+  } else {
+    document.getElementById('sm-upc-body').innerHTML = '<div class="sm-none">No product found in UPC database</div>';
+  }
+
+  // eBay pricing
+  if (ebayRes && ebayRes.found) {
+    const rows = (ebayRes.recentSales || []).map(s => `
+      <div class="sm-sale-row">
+        <span class="sm-sale-title">${esc(s.title || '')}</span>
+        <span class="sm-sale-price">${fmt(s.price)}</span>
+      </div>`).join('');
+    document.getElementById('sm-ebay-body').innerHTML = `
+      <div class="sm-price-boxes">
+        <div class="sm-price-box"><div class="sm-px-label">Avg</div><div class="sm-px-val">${fmt(ebayRes.avg)}</div></div>
+        <div class="sm-price-box sm-px-low"><div class="sm-px-label">Low</div><div class="sm-px-val">${fmt(ebayRes.low)}</div></div>
+        <div class="sm-price-box sm-px-high"><div class="sm-px-label">High</div><div class="sm-px-val">${fmt(ebayRes.high)}</div></div>
+      </div>
+      <div class="sm-sales-head">Recent sold listings (${ebayRes.count})</div>
+      <div class="sm-sales-list">${rows}</div>`;
+  } else {
+    const msg = ebayRes?.error || 'No eBay results found';
+    document.getElementById('sm-ebay-body').innerHTML = `<div class="sm-none">${esc(msg)}</div>`;
+  }
+}
+
+function closeSearchModal() {
+  document.getElementById('search-modal').style.display = 'none';
+}
+
+function prefillFromSearchLookup() {
+  if (!lastSearchLookup) return;
+  closeSearchModal();
+  openModal('add');
+  document.getElementById('item-name').value     = lastSearchLookup.name        || '';
+  document.getElementById('item-image').value    = lastSearchLookup.image_url   || '';
+  document.getElementById('item-category').value = lastSearchLookup.category    || '';
+  if (lastSearchLookup.image_url) previewImage(lastSearchLookup.image_url);
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

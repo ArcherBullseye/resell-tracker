@@ -53,6 +53,172 @@ header {
 .logo-icon { font-size: 22px; }
 .logo-text { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
 
+/* ── Search ──────────────────────────────────────────────────────────────── */
+
+.search-wrap {
+  position: relative;
+  flex: 1;
+  max-width: 380px;
+  margin: 0 20px;
+}
+
+.search-input-row {
+  display: flex;
+  align-items: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  gap: 8px;
+  transition: border-color 0.15s;
+}
+
+.search-input-row:focus-within {
+  border-color: var(--green);
+}
+
+.search-icon { font-size: 14px; opacity: 0.5; flex-shrink: 0; }
+
+.search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 14px;
+  padding: 9px 0;
+}
+
+.search-input::placeholder { color: var(--text-dim); }
+
+.search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  z-index: 200;
+  overflow: hidden;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.sr-lookup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  transition: background 0.12s;
+}
+.sr-lookup:hover { background: var(--border); }
+.sr-lookup-icon { font-size: 18px; }
+.sr-lookup-text { flex: 1; }
+.sr-lookup-title { font-size: 14px; color: var(--text); }
+.sr-lookup-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.sr-arrow { font-size: 20px; color: var(--text-dim); }
+
+.sr-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 8px 14px 4px;
+}
+
+.sr-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.12s;
+}
+.sr-item:last-child { border-bottom: none; }
+.sr-item:hover { background: var(--surface2); }
+
+.sr-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
+.sr-thumb-ph { width: 36px; height: 36px; border-radius: 6px; background: var(--surface2); display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+
+.sr-item-body { flex: 1; min-width: 0; }
+.sr-item-name { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-item-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+
+.sr-badge { font-size: 11px; font-weight: 600; border-radius: 100px; padding: 2px 8px; flex-shrink: 0; }
+.sr-badge-inv  { background: var(--yellow-dim); color: var(--yellow); }
+.sr-badge-sold { background: var(--green-dim);  color: var(--green); }
+
+.sr-empty { padding: 14px; font-size: 13px; color: var(--text-dim); text-align: center; }
+
+/* ── Search Lookup Modal ─────────────────────────────────────────────────── */
+
+.modal-wide { max-width: 780px; width: 96vw; }
+
+.search-modal-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 620px) {
+  .search-modal-body { grid-template-columns: 1fr; }
+}
+
+.sm-col { display: flex; flex-direction: column; gap: 12px; }
+
+.sm-section-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sm-loading { font-size: 13px; color: var(--text-dim); padding: 12px 0; }
+.sm-none    { font-size: 13px; color: var(--text-dim); padding: 12px 0; font-style: italic; }
+
+.sm-product-img {
+  width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  margin-bottom: 4px;
+}
+
+.sm-product-name { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4; }
+.sm-product-meta { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.sm-product-meta span { color: var(--text-muted); text-transform: uppercase; font-size: 10px; font-weight: 600; margin-right: 4px; }
+.sm-product-desc { font-size: 12px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; }
+
+.sm-price-boxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.sm-price-box { background: var(--surface2); border-radius: var(--radius-sm); padding: 10px 12px; text-align: center; }
+.sm-px-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.sm-px-val { font-size: 16px; font-weight: 700; color: var(--text); }
+.sm-px-low  .sm-px-val { color: var(--green); }
+.sm-px-high .sm-px-val { color: var(--yellow); }
+
+.sm-sales-head { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+.sm-sales-list { display: flex; flex-direction: column; gap: 6px; }
+.sm-sale-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.sm-sale-title { font-size: 12px; color: var(--text-muted); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-sale-price { font-size: 13px; font-weight: 600; color: var(--text); flex-shrink: 0; }
+
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
 
 .btn {

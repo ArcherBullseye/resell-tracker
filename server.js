@@ -393,5 +393,5 @@ app.get('/api/lookup/ebay', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.1.2 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.1.3 running on port ${PORT}`);
 });
