@@ -610,48 +610,89 @@ function scannerSetManualStore() {
   setScannerStore(id, `Lowe's Store #${id}`);
 }
 
-async function runScan(page = 1) {
+let _activeScanSource = null;
+
+function scanLog(msg, level = 'info', ts = '') {
+  const linesEl = document.getElementById('scan-console-lines');
+  const line = document.createElement('div');
+  line.className = `scan-log-line scan-log-${level}`;
+  line.innerHTML = `<span class="scan-log-ts">${ts || new Date().toLocaleTimeString()}</span> ${esc(msg)}`;
+  linesEl.appendChild(line);
+  linesEl.scrollTop = linesEl.scrollHeight;
+}
+
+function runScan(page = 1) {
   if (!scannerStoreId) return toast('Select a store first', 'error');
+
+  // Cancel any in-progress scan
+  if (_activeScanSource) { _activeScanSource.close(); _activeScanSource = null; }
 
   scanPage = page;
   const minDiscount = document.getElementById('scanner-discount').value;
   const category    = document.getElementById('scanner-category').value;
 
-  const statusEl = document.getElementById('scanner-status');
-  const gridEl   = document.getElementById('scanner-grid');
-  const paginEl  = document.getElementById('scanner-pagination');
+  const statusEl  = document.getElementById('scanner-status');
+  const gridEl    = document.getElementById('scanner-grid');
+  const paginEl   = document.getElementById('scanner-pagination');
+  const consoleEl = document.getElementById('scan-console');
+  const linesEl   = document.getElementById('scan-console-lines');
+  const scanBtn   = document.getElementById('scanner-scan-btn');
 
-  statusEl.innerHTML = '<div class="scanner-loading">&#128269; Scanning Lowe\'s clearance…</div>';
-  gridEl.innerHTML   = '';
+  // Reset UI
+  statusEl.innerHTML    = '';
+  gridEl.innerHTML      = '';
   paginEl.style.display = 'none';
-  document.getElementById('scanner-scan-btn').disabled = true;
+  linesEl.innerHTML     = '';
+  consoleEl.style.display = 'block';
+  scanBtn.disabled = true;
 
   const params = new URLSearchParams({ storeId: scannerStoreId, minDiscount, page, category });
-  const data = await api(`/api/lowes/clearance?${params}`);
-  document.getElementById('scanner-scan-btn').disabled = false;
+  const es = new EventSource(`/api/lowes/clearance-stream?${params}`);
+  _activeScanSource = es;
 
-  if (data.error) {
-    statusEl.innerHTML = `
-      <div class="scanner-error">
-        <strong>${data.error === 'BLOCKED' ? '&#128683; Blocked by Lowe\'s' : '&#9888;&#65039; Error'}</strong><br>
-        ${esc(data.message || data.error)}
-        ${data.error === 'BLOCKED' ? '<br><small>Try opening <a href="https://www.lowes.com" target="_blank">lowes.com</a> in a browser first, then retry.</small>' : ''}
-      </div>`;
-    return;
-  }
+  es.addEventListener('log', e => {
+    const { msg, level, ts } = JSON.parse(e.data);
+    scanLog(msg, level, ts);
+  });
 
-  if (!data.products?.length) {
-    statusEl.innerHTML = `<div class="scanner-empty">No clearance items found at ${esc(scannerStoreName)} with ${minDiscount}%+ off. Try lowering the discount threshold.</div>`;
-    return;
-  }
+  es.addEventListener('result', e => {
+    es.close(); _activeScanSource = null;
+    scanBtn.disabled = false;
+    const data = JSON.parse(e.data);
 
-  statusEl.innerHTML = `<div class="scanner-count">Found <strong>${data.products.length}</strong> items ${parseInt(minDiscount)}%+ off at ${esc(scannerStoreName)} (page ${page})</div>`;
-  gridEl.innerHTML   = data.products.map(renderScanCard).join('');
+    if (!data.products?.length) {
+      const hint = data.raw_keys?.length
+        ? `<br><small>Page keys: ${esc(data.raw_keys.join(', '))}</small>`
+        : '';
+      statusEl.innerHTML = `<div class="scanner-empty">No clearance items found at ${esc(scannerStoreName)} with ${minDiscount}%+ off. Try lowering the discount threshold.${hint}</div>`;
+      return;
+    }
 
-  paginEl.style.display = 'flex';
-  document.getElementById('scan-page-label').textContent = `Page ${page}`;
-  document.getElementById('scan-prev-btn').disabled = page <= 1;
-  document.getElementById('scan-next-btn').disabled = data.products.length < 10;
+    statusEl.innerHTML = `<div class="scanner-count">Found <strong>${data.products.length}</strong> items ${parseInt(minDiscount)}%+ off at ${esc(scannerStoreName)} (page ${page})</div>`;
+    gridEl.innerHTML   = data.products.map(renderScanCard).join('');
+    paginEl.style.display = 'flex';
+    document.getElementById('scan-page-label').textContent  = `Page ${page}`;
+    document.getElementById('scan-prev-btn').disabled = page <= 1;
+    document.getElementById('scan-next-btn').disabled = data.products.length < 10;
+  });
+
+  es.addEventListener('error', e => {
+    if (e.data) {
+      const { message } = JSON.parse(e.data);
+      statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Scan failed</strong><br>${esc(message)}</div>`;
+    }
+    es.close(); _activeScanSource = null;
+    scanBtn.disabled = false;
+  });
+
+  // SSE connection error (network-level)
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) return;
+    scanLog('Connection lost — scan may have timed out', 'error');
+    statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Connection error</strong><br>Lost connection to server. Check that Resell Tracker is running.</div>`;
+    es.close(); _activeScanSource = null;
+    scanBtn.disabled = false;
+  };
 }
 
 function renderScanCard(item) {

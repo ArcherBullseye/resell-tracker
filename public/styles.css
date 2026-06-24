@@ -1144,3 +1144,63 @@ textarea { resize: vertical; }
   justify-content: space-between;
   margin-bottom: 12px;
 }
+
+/* ── Scan Console ────────────────────────────────────────────────────────── */
+
+.scan-console {
+  max-width: 900px;
+  margin: 0 auto 16px;
+  padding: 0 24px;
+  width: 100%;
+}
+
+.scan-console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 6px 12px;
+}
+
+.scan-console-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.scan-console-close {
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.scan-console-close:hover { color: #aaa; }
+
+.scan-console-lines {
+  background: #0d0d1a;
+  border: 1px solid #333;
+  border-radius: 0 0 6px 6px;
+  padding: 10px 12px;
+  height: 180px;
+  overflow-y: auto;
+  font-family: 'SF Mono', 'Fira Mono', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.scan-log-line { display: flex; gap: 8px; }
+.scan-log-ts   { color: #444; flex-shrink: 0; }
+
+.scan-log-info    { color: #ccc; }
+.scan-log-detail  { color: #666; }
+.scan-log-warn    { color: #f0a500; }
+.scan-log-success { color: #4caf50; }
+.scan-log-error   { color: #f44336; }

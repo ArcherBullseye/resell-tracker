@@ -164,6 +164,15 @@
 
     <!-- Results -->
     <div id="scanner-results-area">
+      <!-- Live scan console -->
+      <div id="scan-console" class="scan-console" style="display:none">
+        <div class="scan-console-bar">
+          <span class="scan-console-title">&#128269; Scan Log</span>
+          <button class="scan-console-close" onclick="document.getElementById('scan-console').style.display='none'">&#10005;</button>
+        </div>
+        <div id="scan-console-lines" class="scan-console-lines"></div>
+      </div>
+
       <div id="scanner-status" class="scanner-status"></div>
       <div id="scanner-grid" class="scanner-grid"></div>
       <div id="scanner-pagination" class="scanner-pagination" style="display:none">

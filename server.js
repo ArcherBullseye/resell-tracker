@@ -526,25 +526,29 @@ async function getBrowser() {
 
 process.on('exit', () => { if (_browser) _browser.close().catch(() => {}); });
 
-async function scrapeLowesPage(url, storeId = '') {
+const noop = () => {};
+
+async function scrapeLowesPage(url, storeId = '', log = noop) {
   const browser = await getBrowser();
   const page    = await browser.newPage();
   try {
+    log(`Opening URL: ${url}`);
     await page.setUserAgent(LOWES_UA);
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
     if (storeId) {
       await page.setCookie({ name: 'sn', value: String(storeId), domain: '.lowes.com', path: '/' });
     }
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    // Wait up to 10s for __NEXT_DATA__ to appear in the DOM
-    await page.waitForFunction(
+    log('Page navigated — waiting for product data…');
+    const found = await page.waitForFunction(
       () => !!document.getElementById('__NEXT_DATA__'),
       { timeout: 10000 }
-    ).catch(() => {});
-    const html = await page.content();
-    // Log snippet for debugging
-    const snippet = html.slice(0, 300).replace(/\s+/g, ' ');
-    console.log(`[Lowe's] url=${url} html_len=${html.length} snippet: ${snippet}`);
+    ).then(() => true).catch(() => false);
+
+    const html    = await page.content();
+    const snippet = html.slice(0, 400).replace(/\s+/g, ' ');
+    log(`Page loaded — ${html.length.toLocaleString()} bytes${found ? ', __NEXT_DATA__ found' : ', __NEXT_DATA__ NOT found'}`, found ? 'info' : 'warn');
+    if (!found) log(`Page preview: ${snippet}`, 'detail');
     return html;
   } finally {
     await page.close().catch(() => {});
@@ -569,7 +573,7 @@ function dig(obj, ...paths) {
   return null;
 }
 
-function parseProducts(nextData, minDiscount) {
+function parseProducts(nextData, minDiscount, log = noop) {
   const products = dig(nextData,
     'props.pageProps.data.productResults.products',
     'props.pageProps.productResults.products',
@@ -579,10 +583,11 @@ function parseProducts(nextData, minDiscount) {
   );
   if (!Array.isArray(products)) {
     const keys = Object.keys(nextData?.props?.pageProps || {});
-    console.warn('[Lowe\'s] parseProducts: no products array found. pageProps keys:', keys);
+    log(`No products array in page data. pageProps keys: [${keys.join(', ')}]`, 'warn');
     return { products: [], total: 0, raw_keys: keys };
   }
 
+  log(`Parsing ${products.length} raw products from page…`);
   const out = products
     .map(p => {
       const now  = p.currentPrice ?? p.salePrice ?? p.price ?? p.pricing?.salePrice ?? p.pricing?.currentPrice;
@@ -604,6 +609,7 @@ function parseProducts(nextData, minDiscount) {
     .filter(p => p.name && p.discount_pct >= minDiscount)
     .sort((a, b) => b.discount_pct - a.discount_pct);
 
+  log(`${out.length} of ${products.length} items match ${minDiscount}%+ discount`, out.length > 0 ? 'success' : 'warn');
   return { products: out, total: products.length };
 }
 
@@ -637,10 +643,9 @@ app.get('/api/lowes/stores', async (req, res) => {
   }
 });
 
-// Core clearance scan function (shared by API endpoint and scheduler)
-async function runLowesCleared(storeId, minDiscount, category, page) {
-  const offset  = (page - 1) * 48;
-  // Try multiple URL patterns — Lowe's has changed these before
+// Core clearance scan — log callback receives (msg, level) in real time
+async function runLowesCleared(storeId, minDiscount, category, page, log = noop) {
+  const offset    = (page - 1) * 48;
   const catSuffix = category ? `-${category}` : '';
   const urls = [
     `https://www.lowes.com/l/sale/clearance${catSuffix}?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`,
@@ -648,23 +653,73 @@ async function runLowesCleared(storeId, minDiscount, category, page) {
     `https://www.lowes.com/pl/Clearance/4294967118?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}`,
   ];
 
+  log(`Starting scan — store #${storeId}, min discount ${minDiscount}%, page ${page}`);
+  log(`Will try ${urls.length} URL patterns`);
+
   let lastErr = null;
-  for (const url of urls) {
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i];
+    log(`[${i + 1}/${urls.length}] Trying: ${url.replace(/\?.*/, '')}…`);
     try {
-      const html = await scrapeLowesPage(url, storeId);
+      const html     = await scrapeLowesPage(url, storeId, log);
+      log('Extracting product data from page…');
       const nextData = extractNextData(html);
-      const result = parseProducts(nextData, minDiscount);
-      // include raw_keys in result so UI can show what came back if products empty
+      const result   = parseProducts(nextData, minDiscount, log);
       return result;
     } catch (err) {
-      console.warn(`[Lowe's] URL failed (${url}): ${err.message}`);
+      const detail = err.message === 'NO_NEXT_DATA'
+        ? 'No product data in page (Lowe\'s may have served a bot-check or the URL format changed)'
+        : err.message;
+      log(`URL ${i + 1} failed: ${detail}`, 'warn');
       lastErr = err;
+      if (i < urls.length - 1) log(`Trying next URL pattern…`);
     }
   }
+
+  log(`All ${urls.length} URL patterns failed`, 'error');
   throw lastErr;
 }
 
-// Clearance scan API endpoint
+// Streaming SSE endpoint — used by the UI for live console output
+app.get('/api/lowes/clearance-stream', async (req, res) => {
+  const { storeId, minDiscount = 30, page = 1, category = '' } = req.query;
+  if (!storeId) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'storeId required' }));
+  }
+
+  res.writeHead(200, {
+    'Content-Type':  'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection':    'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  const send = (event, data) => {
+    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
+  };
+  const log = (msg, level = 'info') => {
+    send('log', { msg, level, ts: new Date().toLocaleTimeString() });
+    console.log(`[scan] ${msg}`);
+  };
+
+  try {
+    log('Launching headless browser…');
+    const result = await runLowesCleared(storeId, parseFloat(minDiscount), category, parseInt(page), log);
+    send('result', { ...result, page: parseInt(page), store_id: storeId });
+  } catch (err) {
+    const isNoData = err.message === 'NO_NEXT_DATA';
+    const detail = isNoData
+      ? 'Lowe\'s returned a page without product data. They may be serving a bot-check page, or their URL structure changed.'
+      : err.message;
+    log(`Scan failed: ${detail}`, 'error');
+    send('error', { message: detail, raw: err.message });
+  } finally {
+    res.end();
+  }
+});
+
+// Non-streaming endpoint — kept for the scheduler (no SSE needed)
 app.get('/api/lowes/clearance', async (req, res) => {
   const { storeId, minDiscount = 30, page = 1, category = '' } = req.query;
   if (!storeId) return res.status(400).json({ error: 'storeId required' });
@@ -672,11 +727,11 @@ app.get('/api/lowes/clearance', async (req, res) => {
     const result = await runLowesCleared(storeId, parseFloat(minDiscount), category, parseInt(page));
     res.json({ ...result, page: parseInt(page), store_id: storeId });
   } catch (err) {
-    const isNoData = err.message.includes('NO_NEXT_DATA');
+    const isNoData = err.message === 'NO_NEXT_DATA';
     res.status(500).json({
       error: err.message,
       message: isNoData
-        ? 'Lowe\'s page loaded but no product data found. The URL format may have changed — check server logs for the snippet.'
+        ? 'Lowe\'s page loaded but no product data found. Check server logs.'
         : err.message,
     });
   }
@@ -735,5 +790,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.4 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.5 running on port ${PORT}`);
 });
