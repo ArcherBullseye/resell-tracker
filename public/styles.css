@@ -344,7 +344,8 @@ header {
   color: var(--text-dim);
 }
 
-.item-card-body { padding: 14px 16px; }
+.item-card-body { padding: 14px 16px; display: flex; flex-direction: column; flex: 1; }
+.item-card { display: flex; flex-direction: column; }
 
 .item-card-header {
   display: flex;
@@ -395,6 +396,26 @@ header {
 .item-profit .profit-value { font-size: 18px; font-weight: 700; }
 .profit-pos { color: var(--green); }
 .profit-neg { color: var(--red); }
+.stat-inv-value { color: var(--yellow); }
+
+.upc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-family: monospace;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  user-select: none;
+  margin-left: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+.upc-badge:hover { background: var(--border); color: var(--text); }
 
 .ebay-hint { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
 .ebay-hint span { color: var(--accent); }
@@ -431,9 +452,38 @@ header {
 .item-actions {
   display: flex;
   gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
 }
 
 .item-actions .btn { flex: 1; font-size: 13px; padding: 7px; }
+
+/* ── eBay Live Price Row ─────────────────────────────────────────────────── */
+
+.ebay-live-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 7px 10px;
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+}
+
+.ebay-live-label {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.ebay-live-val {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.ebay-live-val.ebay-live-found { color: var(--green); }
+.ebay-live-val.ebay-live-none  { color: var(--text-dim); font-style: italic; font-weight: 400; }
+.ebay-live-ship { color: var(--text-dim); font-weight: 400; font-size: 11px; }
 
 /* ── Empty state ─────────────────────────────────────────────────────────── */
 

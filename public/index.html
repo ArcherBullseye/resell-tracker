@@ -44,6 +44,10 @@
         <div class="stat-value" id="stat-sold">&#8212;</div>
       </div>
       <div class="stat-card">
+        <div class="stat-label">Inventory Value</div>
+        <div class="stat-value stat-inv-value" id="stat-inv-value">&#8212;</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-label">Total Invested</div>
         <div class="stat-value" id="stat-invested">&#8212;</div>
       </div>
@@ -79,6 +83,7 @@
     <div class="modal">
       <div class="modal-header">
         <h2 id="modal-title">Add Item</h2>
+        <span id="modal-upc-badge" class="upc-badge" style="display:none" onclick="copyUpc(this)" title="Click to copy UPC">&#128203; <span id="modal-upc-text"></span></span>
         <button class="btn-close" onclick="closeModal()">&#10005;</button>
       </div>
 

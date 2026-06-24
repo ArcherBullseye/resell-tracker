@@ -39,6 +39,7 @@ async function loadStats() {
   document.getElementById('stat-total').textContent = stats.total;
   document.getElementById('stat-inventory').textContent = stats.inventory;
   document.getElementById('stat-sold').textContent = stats.sold;
+  document.getElementById('stat-inv-value').textContent = fmt(stats.inventoryValue);
   document.getElementById('stat-invested').textContent = fmt(stats.totalInvested);
   document.getElementById('stat-revenue').textContent = fmt(stats.totalRevenue);
   const profitEl = document.getElementById('stat-profit');
@@ -71,6 +72,9 @@ async function loadItems(tab) {
 
   empty.style.display = 'none';
   grid.innerHTML = items.map(renderCard).join('');
+
+  const inventoryItems = items.filter(i => i.status !== 'sold');
+  if (inventoryItems.length) fetchEbayLivePrices(inventoryItems);
 }
 
 function renderCard(item) {
@@ -118,6 +122,13 @@ function renderCard(item) {
     daysHtml = `<span class="days-badge ${dayCls}">${label}</span>`;
   }
 
+  const ebayLiveRow = item.status !== 'sold'
+    ? `<div class="ebay-live-row" id="ebay-live-${item.id}">
+        <span class="ebay-live-label">eBay Lowest</span>
+        <span class="ebay-live-val" id="ebay-live-val-${item.id}">—</span>
+       </div>`
+    : '';
+
   return `
     <div class="item-card">
       ${imgHtml}
@@ -147,12 +158,41 @@ function renderCard(item) {
           ${platformHtml}
           ${daysHtml}
         </div>
+        ${ebayLiveRow}
         <div class="item-actions">
           <button class="btn btn-secondary" onclick="openModal('edit', ${item.id})">Edit</button>
           ${item.status !== 'sold' ? `<button class="btn btn-sell" onclick="openSellModal(${item.id}, '${esc(item.name)}', ${item.buy_price || 0})">Sell</button>` : ''}
         </div>
       </div>
     </div>`;
+}
+
+// ── eBay Live Price Fetch ─────────────────────────────────────────────────────
+
+async function fetchEbayLivePrices(items) {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const el = document.getElementById(`ebay-live-val-${item.id}`);
+    if (!el) continue;
+    try {
+      const q = item.name;
+      const data = await api(`/api/lookup/ebay/lowest?q=${encodeURIComponent(q)}`);
+      if (data.found) {
+        const label = data.shipping > 0
+          ? `${fmt(data.price)} <span class="ebay-live-ship">+${fmt(data.shipping)} ship</span>`
+          : fmt(data.price);
+        el.innerHTML = label;
+        el.classList.add('ebay-live-found');
+      } else {
+        el.textContent = 'Not listed';
+        el.classList.add('ebay-live-none');
+      }
+    } catch {
+      el.textContent = '—';
+    }
+    // stagger requests so we don't hammer the API
+    if (i < items.length - 1) await new Promise(r => setTimeout(r, 300));
+  }
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -179,6 +219,7 @@ function openModal(mode, id) {
     modalDeleteId = null;
     deleteBtn.style.display = 'none';
     document.getElementById('buy-date').value = today();
+    document.getElementById('modal-upc-badge').style.display = 'none';
   }
 
   document.getElementById('item-modal').style.display = 'flex';
@@ -188,6 +229,14 @@ async function loadItemIntoForm(id) {
   const item = await api(`/api/items/${id}`);
   document.getElementById('item-id').value = item.id;
   document.getElementById('barcode').value = item.barcode || '';
+
+  const upcBadge = document.getElementById('modal-upc-badge');
+  if (item.barcode) {
+    document.getElementById('modal-upc-text').textContent = item.barcode;
+    upcBadge.style.display = 'inline-flex';
+  } else {
+    upcBadge.style.display = 'none';
+  }
   document.getElementById('item-name').value = item.name || '';
   document.getElementById('item-category').value = item.category || '';
   document.getElementById('item-image').value = item.image_url || '';
@@ -577,6 +626,11 @@ function renderSearchRow(item) {
 
 function closeSearch() {
   document.getElementById('search-dropdown').style.display = 'none';
+}
+
+function copyUpc(el) {
+  const upc = document.getElementById('modal-upc-text').textContent;
+  navigator.clipboard.writeText(upc).then(() => toast('UPC copied', 'success'));
 }
 
 async function openSearchLookup(q) {

@@ -291,6 +291,7 @@ app.get('/api/stats', (req, res) => {
   const inventory = db.prepare("SELECT COUNT(*) as c FROM items WHERE status='inventory'").get().c;
   const sold      = db.prepare("SELECT COUNT(*) as c FROM items WHERE status='sold'").get().c;
 
+  const inventoryValue = db.prepare("SELECT COALESCE(SUM(buy_price * COALESCE(quantity,1)),0) as s FROM items WHERE status='inventory'").get().s;
   const totalInvested = db.prepare('SELECT COALESCE(SUM(buy_price * COALESCE(quantity,1)),0) as s FROM items').get().s;
   const totalRevenue  = db.prepare("SELECT COALESCE(SUM(sell_price * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
   const totalShipping = db.prepare("SELECT COALESCE(SUM(shipping_cost * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
@@ -300,7 +301,7 @@ app.get('/api/stats', (req, res) => {
   const costOfSold = db.prepare("SELECT COALESCE(SUM(buy_price * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
 
   res.json({
-    total, inventory, sold, totalInvested, totalRevenue,
+    total, inventory, sold, inventoryValue, totalInvested, totalRevenue,
     netProfit: totalRevenue - costOfSold - totalShipping - totalFees,
     totalShipping, totalFees
   });
@@ -392,6 +393,34 @@ app.get('/api/lookup/ebay', async (req, res) => {
   }
 });
 
+app.get('/api/lookup/ebay/lowest', async (req, res) => {
+  const { q } = req.query;
+  const appId = getSetting('EBAY_APP_ID');
+  if (!appId) return res.status(400).json({ error: 'eBay App ID not configured' });
+  if (!q)     return res.status(400).json({ error: 'q required' });
+
+  try {
+    const params = new URLSearchParams({
+      'OPERATION-NAME':          'findItemsAdvanced',
+      'SERVICE-VERSION':         '1.0.0',
+      'SECURITY-APPNAME':        appId,
+      'RESPONSE-DATA-FORMAT':    'JSON',
+      'keywords':                q,
+      'sortOrder':               'PricePlusShippingLowest',
+      'paginationInput.entriesPerPage': '3'
+    });
+    const response = await fetch(`https://svcs.ebay.com/services/search/FindingService/v1?${params}`);
+    const data = await response.json();
+    const items = data?.findItemsAdvancedResponse?.[0]?.searchResult?.[0]?.item || [];
+    if (!items.length) return res.json({ found: false });
+    const price    = parseFloat(items[0].sellingStatus?.[0]?.currentPrice?.[0]?.['__value__'] || 0);
+    const shipping = parseFloat(items[0].shippingInfo?.[0]?.shippingServiceCost?.[0]?.['__value__'] || 0);
+    res.json({ found: true, price, shipping, total: +(price + shipping).toFixed(2) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.1.3 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.1.4 running on port ${PORT}`);
 });
