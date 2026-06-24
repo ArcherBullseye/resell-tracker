@@ -1,16 +1,19 @@
-FROM node:20-alpine
+FROM node:20-slim
 
-# Chromium for Lowe's clearance scraper
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont
+# Install real Google Chrome stable — critical for Akamai fingerprint bypass
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    --no-install-recommends \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV CHROMIUM_PATH=/usr/bin/chromium-browser
+ENV CHROMIUM_PATH=/usr/bin/google-chrome-stable
 
 WORKDIR /app
 
