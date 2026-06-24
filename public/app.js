@@ -533,6 +533,161 @@ async function confirmDelete() {
   loadItems();
 }
 
+// ── Lowe's Scanner ────────────────────────────────────────────────────────────
+
+let scanPage = 1;
+let scannerStoreId   = '';
+let scannerStoreName = '';
+
+async function openScanner() {
+  document.getElementById('scanner-panel').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+
+  // Load saved store
+  const saved = await api('/api/lowes/settings');
+  if (saved.storeId) {
+    setScannerStore(saved.storeId, saved.storeName || `Store #${saved.storeId}`);
+  }
+}
+
+function closeScanner() {
+  document.getElementById('scanner-panel').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+}
+
+function setScannerStore(id, name) {
+  scannerStoreId   = id;
+  scannerStoreName = name;
+  document.getElementById('scanner-store-name').textContent = `${name} (#${id})`;
+  document.getElementById('scanner-store-display').style.display = 'flex';
+  document.getElementById('scanner-store-picker').style.display  = 'none';
+  // Persist to settings
+  api('/api/settings', 'POST', { LOWES_STORE_ID: id, LOWES_STORE_NAME: name });
+}
+
+function clearScannerStore() {
+  scannerStoreId = '';
+  scannerStoreName = '';
+  document.getElementById('scanner-store-display').style.display = 'none';
+  document.getElementById('scanner-store-picker').style.display  = 'block';
+}
+
+async function scannerFindStores() {
+  const zip = document.getElementById('scanner-zip').value.trim();
+  if (zip.length < 5) return toast('Enter a 5-digit ZIP code', 'error');
+
+  const el = document.getElementById('scanner-store-results');
+  el.innerHTML = '<div class="scanner-loading">Searching…</div>';
+
+  const data = await api(`/api/lowes/stores?zip=${encodeURIComponent(zip)}`);
+  if (data.error) {
+    el.innerHTML = `<div class="scanner-error">${esc(data.message || data.error)}<br><small>Try entering your store number manually (find it on lowes.com).</small></div>`;
+    return;
+  }
+  if (!data.stores?.length) {
+    el.innerHTML = '<div class="scanner-error">No stores found for that ZIP.</div>';
+    return;
+  }
+
+  el.innerHTML = data.stores.map(s => `
+    <div class="scanner-store-row" onclick="setScannerStore('${esc(s.id)}', '${esc(s.name)}')">
+      <div class="scanner-store-info">
+        <div class="scanner-store-row-name">${esc(s.name)}</div>
+        <div class="scanner-store-row-addr">${esc(s.address)}, ${esc(s.city)}, ${esc(s.state)} ${esc(s.zip)}</div>
+      </div>
+      <div class="scanner-store-row-meta">
+        ${s.distance ? `<span>${s.distance.toFixed(1)} mi</span>` : ''}
+        <span class="scanner-store-row-id">#${esc(s.id)}</span>
+      </div>
+    </div>`).join('');
+}
+
+function scannerSetManualStore() {
+  const id = document.getElementById('scanner-store-id-manual').value.trim();
+  if (!id) return toast('Enter a store number', 'error');
+  setScannerStore(id, `Lowe's Store #${id}`);
+}
+
+async function runScan(page = 1) {
+  if (!scannerStoreId) return toast('Select a store first', 'error');
+
+  scanPage = page;
+  const minDiscount = document.getElementById('scanner-discount').value;
+  const category    = document.getElementById('scanner-category').value;
+
+  const statusEl = document.getElementById('scanner-status');
+  const gridEl   = document.getElementById('scanner-grid');
+  const paginEl  = document.getElementById('scanner-pagination');
+
+  statusEl.innerHTML = '<div class="scanner-loading">&#128269; Scanning Lowe\'s clearance…</div>';
+  gridEl.innerHTML   = '';
+  paginEl.style.display = 'none';
+  document.getElementById('scanner-scan-btn').disabled = true;
+
+  const params = new URLSearchParams({ storeId: scannerStoreId, minDiscount, page, category });
+  const data = await api(`/api/lowes/clearance?${params}`);
+  document.getElementById('scanner-scan-btn').disabled = false;
+
+  if (data.error) {
+    statusEl.innerHTML = `
+      <div class="scanner-error">
+        <strong>${data.error === 'BLOCKED' ? '&#128683; Blocked by Lowe\'s' : '&#9888;&#65039; Error'}</strong><br>
+        ${esc(data.message || data.error)}
+        ${data.error === 'BLOCKED' ? '<br><small>Try opening <a href="https://www.lowes.com" target="_blank">lowes.com</a> in a browser first, then retry.</small>' : ''}
+      </div>`;
+    return;
+  }
+
+  if (!data.products?.length) {
+    statusEl.innerHTML = `<div class="scanner-empty">No clearance items found at ${esc(scannerStoreName)} with ${minDiscount}%+ off. Try lowering the discount threshold.</div>`;
+    return;
+  }
+
+  statusEl.innerHTML = `<div class="scanner-count">Found <strong>${data.products.length}</strong> items ${parseInt(minDiscount)}%+ off at ${esc(scannerStoreName)} (page ${page})</div>`;
+  gridEl.innerHTML   = data.products.map(renderScanCard).join('');
+
+  paginEl.style.display = 'flex';
+  document.getElementById('scan-page-label').textContent = `Page ${page}`;
+  document.getElementById('scan-prev-btn').disabled = page <= 1;
+  document.getElementById('scan-next-btn').disabled = data.products.length < 10;
+}
+
+function renderScanCard(item) {
+  const discountCls = item.discount_pct >= 70 ? 'scan-badge-red' : item.discount_pct >= 50 ? 'scan-badge-orange' : 'scan-badge-yellow';
+  const imgHtml = item.image
+    ? `<img class="scan-card-img" src="${esc(item.image)}" onerror="this.style.display='none'" />`
+    : '<div class="scan-card-img-ph">&#127968;</div>';
+  return `
+    <div class="scan-card">
+      ${imgHtml}
+      <div class="scan-card-body">
+        <div class="scan-badge ${discountCls}">${item.discount_pct}% OFF</div>
+        <div class="scan-card-name">${esc(item.name || '—')}</div>
+        ${item.model ? `<div class="scan-card-model">Model: ${esc(item.model)}</div>` : ''}
+        ${item.category ? `<div class="scan-card-cat">${esc(item.category)}</div>` : ''}
+        <div class="scan-card-prices">
+          ${item.was_price ? `<span class="scan-was">${fmt(item.was_price)}</span>` : ''}
+          <span class="scan-now">${item.now_price ? fmt(item.now_price) : '—'}</span>
+        </div>
+        <div class="scan-card-actions">
+          ${item.url ? `<a class="btn btn-ghost btn-xs" href="${esc(item.url)}" target="_blank">View &#8599;</a>` : ''}
+          <button class="btn btn-primary btn-xs" onclick='addScanItem(${JSON.stringify({ name: item.name, image: item.image, category: item.category, now_price: item.now_price, model: item.model }).replace(/'/g, "&#39;")})'>+ Add to Tracker</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function addScanItem(item) {
+  closeScanner();
+  openModal('add');
+  if (item.name)     document.getElementById('item-name').value     = item.name;
+  if (item.image)    document.getElementById('item-image').value    = item.image;
+  if (item.category) document.getElementById('item-category').value = item.category;
+  if (item.now_price) document.getElementById('buy-price').value    = item.now_price;
+  if (item.image)    previewImage(item.image);
+  updateProfitPreview();
+}
+
 // ── Global Search ─────────────────────────────────────────────────────────────
 
 function initSearch() {

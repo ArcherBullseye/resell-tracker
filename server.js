@@ -109,7 +109,7 @@ app.get('/api/settings', (req, res) => {
 });
 
 app.post('/api/settings', (req, res) => {
-  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY'];
+  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -421,6 +421,170 @@ app.get('/api/lookup/ebay/lowest', async (req, res) => {
   }
 });
 
+// ── Lowe's Scanner ───────────────────────────────────────────────────────────
+
+const LOWES_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
+};
+
+const LOWES_API_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Origin': 'https://www.lowes.com',
+  'Referer': 'https://www.lowes.com/',
+};
+
+async function lowesGet(url, headers = LOWES_HEADERS) {
+  const res = await fetch(url, { headers, redirect: 'follow' });
+  if (res.status === 403) throw new Error('BLOCKED');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res;
+}
+
+function extractNextData(html) {
+  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!m) throw new Error('NO_NEXT_DATA');
+  return JSON.parse(m[1]);
+}
+
+function dig(obj, ...paths) {
+  for (const path of paths) {
+    let cur = obj;
+    for (const key of path.split('.')) {
+      if (cur == null) break;
+      cur = cur[key];
+    }
+    if (cur != null) return cur;
+  }
+  return null;
+}
+
+function parseProducts(nextData, minDiscount) {
+  const products = dig(nextData,
+    'props.pageProps.data.productResults.products',
+    'props.pageProps.productResults.products',
+    'props.pageProps.data.products',
+    'props.pageProps.initialData.products',
+    'props.pageProps.products'
+  );
+  if (!Array.isArray(products)) return { products: [], total: 0, raw_keys: Object.keys(nextData?.props?.pageProps || {}) };
+
+  const out = products
+    .map(p => {
+      const now  = p.currentPrice ?? p.salePrice ?? p.price ?? p.pricing?.salePrice ?? p.pricing?.currentPrice;
+      const was  = p.regularPrice ?? p.wasPrice   ?? p.pricing?.regularPrice ?? p.pricing?.wasPrice;
+      const pct  = (was && now && was > now) ? Math.round((was - now) / was * 100) : (p.discount ?? p.pctDiscount ?? 0);
+      return {
+        id:           p.itemId ?? p.omniItemId ?? p.sku ?? p.productId,
+        name:         p.description ?? p.title ?? p.name,
+        image:        p.imageUrl ?? p.image ?? p.thumbnail ?? p.images?.[0],
+        now_price:    now,
+        was_price:    was,
+        discount_pct: pct,
+        model:        p.modelNumber ?? p.model ?? p.modelId,
+        category:     Array.isArray(p.categoryHierarchy) ? p.categoryHierarchy.join(' > ') : (p.category ?? null),
+        url:          p.pdUrl ? `https://www.lowes.com${p.pdUrl}` : (p.url ?? null),
+        store_avail:  p.storePickupAvailability ?? p.availability?.storePickup ?? null,
+      };
+    })
+    .filter(p => p.name && p.discount_pct >= minDiscount)
+    .sort((a, b) => b.discount_pct - a.discount_pct);
+
+  return { products: out, total: products.length };
+}
+
+// Store search by ZIP
+app.get('/api/lowes/stores', async (req, res) => {
+  const { zip } = req.query;
+  if (!zip) return res.status(400).json({ error: 'zip required' });
+
+  const endpoints = [
+    `https://www.lowes.com/store/api/search?q=${encodeURIComponent(zip)}&count=10`,
+    `https://www.lowes.com/store/v1/stores?q=${encodeURIComponent(zip)}&maxStores=10`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const r = await lowesGet(url, LOWES_API_HEADERS);
+      const data = await r.json();
+      const raw = data.stores ?? data.results ?? data.data?.stores ?? [];
+      if (!raw.length) continue;
+      const stores = raw.map(s => ({
+        id:       String(s.storeId ?? s.id ?? s.store_id ?? ''),
+        name:     s.storeName ?? s.name ?? s.description ?? '',
+        address:  s.address?.address1 ?? s.streetAddress ?? '',
+        city:     s.address?.city ?? s.city ?? '',
+        state:    s.address?.state ?? s.state ?? '',
+        zip:      s.address?.zipCode ?? s.postalCode ?? '',
+        distance: s.distance ?? null,
+        phone:    s.phone ?? s.phoneNumber ?? null,
+      })).filter(s => s.id);
+      return res.json({ stores });
+    } catch (err) {
+      if (err.message === 'BLOCKED') return res.status(502).json({ error: 'BLOCKED', message: 'Lowe\'s is blocking requests. Try again later or from a different network.' });
+    }
+  }
+
+  res.status(502).json({ error: 'STORE_SEARCH_FAILED', message: 'Could not reach Lowe\'s store search. Try entering your store ID manually.' });
+});
+
+// Clearance scan
+app.get('/api/lowes/clearance', async (req, res) => {
+  const { storeId, minDiscount = 30, page = 1, category = '' } = req.query;
+  if (!storeId) return res.status(400).json({ error: 'storeId required' });
+
+  const offset = (parseInt(page) - 1) * 48;
+  const catPath = category ? `clearance-${category}` : 'clearance-items';
+  const url = `https://www.lowes.com/l/sale/${catPath}?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`;
+
+  try {
+    const r = await lowesGet(url, { ...LOWES_HEADERS, 'Cookie': `sn=${storeId}; akamai_generated_bot_manager_page=1` });
+    const html = await r.text();
+
+    let nextData;
+    try {
+      nextData = extractNextData(html);
+    } catch {
+      // If no __NEXT_DATA__, page may be blocked or CAPTCHA
+      const blocked = html.includes('captcha') || html.includes('Access Denied') || html.includes('robot');
+      return res.status(502).json({
+        error: blocked ? 'BLOCKED' : 'NO_NEXT_DATA',
+        message: blocked
+          ? 'Lowe\'s served a CAPTCHA or bot check. Try opening lowes.com in your browser first, then retry.'
+          : 'Could not parse Lowe\'s page structure. The site layout may have changed.',
+        url,
+      });
+    }
+
+    const result = parseProducts(nextData, parseFloat(minDiscount));
+    res.json({ ...result, page: parseInt(page), store_id: storeId });
+  } catch (err) {
+    if (err.message === 'BLOCKED') {
+      return res.status(502).json({ error: 'BLOCKED', message: 'Lowe\'s blocked the request. Residential IP usually works — try from Umbrel directly.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get saved Lowe's store settings
+app.get('/api/lowes/settings', (req, res) => {
+  res.json({
+    storeId:   getSetting('LOWES_STORE_ID')   || '',
+    storeName: getSetting('LOWES_STORE_NAME') || '',
+  });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.1.4 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.1 running on port ${PORT}`);
 });

@@ -23,6 +23,7 @@
           <div id="search-dropdown" class="search-dropdown" style="display:none"></div>
         </div>
         <div class="header-actions">
+          <button class="btn btn-scanner" onclick="openScanner()" title="Lowe's Clearance Scanner">&#127968; Scanner</button>
           <button class="btn btn-icon" onclick="openSettings()" title="Settings">&#9881;</button>
           <button class="btn btn-primary" onclick="openModal('add')">+ Add Item</button>
         </div>
@@ -44,7 +45,7 @@
         <div class="stat-value" id="stat-sold">&#8212;</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Inventory Value</div>
+        <div class="stat-label">Inv Value</div>
         <div class="stat-value stat-inv-value" id="stat-inv-value">&#8212;</div>
       </div>
       <div class="stat-card">
@@ -76,6 +77,73 @@
         <p>No items yet. Click <strong>+ Add Item</strong> to get started.</p>
       </div>
     </main>
+  </div>
+
+  <!-- ── Lowe's Scanner Panel ─────────────────────────────────────────────── -->
+  <div id="scanner-panel" class="scanner-panel" style="display:none">
+    <div class="scanner-top">
+      <button class="btn btn-ghost" onclick="closeScanner()">&#8592; Back</button>
+      <h2 class="scanner-title">&#127968; Lowe's Clearance Scanner</h2>
+      <div></div>
+    </div>
+
+    <div class="scanner-controls">
+      <!-- Store Picker -->
+      <div class="scanner-block">
+        <label class="scanner-label">Your Store</label>
+        <div id="scanner-store-display" class="scanner-store-display" style="display:none">
+          <span id="scanner-store-name"></span>
+          <button class="btn btn-ghost btn-xs" onclick="clearScannerStore()">Change</button>
+        </div>
+        <div id="scanner-store-picker" class="scanner-store-picker">
+          <div class="scanner-zip-row">
+            <input type="text" id="scanner-zip" class="scanner-zip-input" placeholder="ZIP code" maxlength="5" />
+            <button class="btn btn-secondary" onclick="scannerFindStores()">Find Stores</button>
+            <span class="scanner-or">or</span>
+            <input type="text" id="scanner-store-id-manual" class="scanner-zip-input" placeholder="Store # (manual)" maxlength="6" style="width:140px" />
+            <button class="btn btn-secondary" onclick="scannerSetManualStore()">Use</button>
+          </div>
+          <div id="scanner-store-results" class="scanner-store-results"></div>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="scanner-block scanner-filters">
+        <div class="scanner-filter-item">
+          <label class="scanner-label">Min Discount: <strong id="scanner-discount-label">40%</strong></label>
+          <input type="range" id="scanner-discount" min="10" max="90" value="40" step="5" oninput="document.getElementById('scanner-discount-label').textContent=this.value+'%'" />
+        </div>
+        <div class="scanner-filter-item">
+          <label class="scanner-label">Category</label>
+          <select id="scanner-category" class="scanner-select">
+            <option value="">All Clearance</option>
+            <option value="appliances">Appliances</option>
+            <option value="tools">Tools</option>
+            <option value="lighting">Lighting &amp; Ceiling Fans</option>
+            <option value="flooring">Flooring</option>
+            <option value="paint">Paint</option>
+            <option value="plumbing">Plumbing</option>
+            <option value="hardware">Hardware</option>
+            <option value="outdoor-living">Outdoor Living</option>
+            <option value="storage-organization">Storage &amp; Organization</option>
+            <option value="smart-home">Smart Home</option>
+          </select>
+        </div>
+      </div>
+
+      <button class="btn btn-primary scanner-scan-btn" id="scanner-scan-btn" onclick="runScan(1)">&#128269; Scan Clearance</button>
+    </div>
+
+    <!-- Results -->
+    <div id="scanner-results-area">
+      <div id="scanner-status" class="scanner-status"></div>
+      <div id="scanner-grid" class="scanner-grid"></div>
+      <div id="scanner-pagination" class="scanner-pagination" style="display:none">
+        <button class="btn btn-secondary" onclick="runScan(scanPage - 1)" id="scan-prev-btn">&#8592; Prev</button>
+        <span id="scan-page-label"></span>
+        <button class="btn btn-secondary" onclick="runScan(scanPage + 1)" id="scan-next-btn">Next &#8594;</button>
+      </div>
+    </div>
   </div>
 
   <!-- ── Add / Edit Modal ─────────────────────────────────────────────── -->
