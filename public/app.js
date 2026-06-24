@@ -1093,6 +1093,8 @@ async function openSettings() {
     : '<span class="key-missing">&#9675; Not set</span>';
   document.getElementById('tg-test-result').innerHTML = '';
 
+  if (data.VERSION) document.getElementById('settings-version').textContent = `v${data.VERSION}`;
+
   document.getElementById('settings-modal').style.display = 'flex';
 }
 

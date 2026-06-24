@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
+const VERSION = '1.2.10';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -123,6 +124,7 @@ app.get('/api/settings', (req, res) => {
       : { configured: false, preview: '' };
   }
   result.TELEGRAM_CHAT_ID = getSetting('TELEGRAM_CHAT_ID');
+  result.VERSION = VERSION;
   res.json(result);
 });
 
@@ -845,5 +847,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.10 running on port ${PORT}`);
+  console.log(`Resell Tracker v${VERSION} running on port ${PORT}`);
 });
