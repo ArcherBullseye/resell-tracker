@@ -72,6 +72,9 @@ const MIGRATIONS = [
     enabled        INTEGER DEFAULT 1,
     created_at     TEXT DEFAULT CURRENT_TIMESTAMP
   )`,
+
+  // v6 — shelf location for physical storage
+  `ALTER TABLE items ADD COLUMN shelf TEXT`,
 ];
 
 function runMigrations() {
@@ -177,7 +180,7 @@ app.get('/api/items/:id', (req, res) => {
 
 app.post('/api/items', (req, res) => {
   const {
-    barcode, name, description, image_url, category,
+    barcode, name, description, image_url, category, shelf,
     buy_price, buy_date, sell_price, sell_date,
     shipping_cost, selling_platform, platform_fee_pct,
     ebay_avg_price, ebay_low_price, ebay_high_price,
@@ -188,13 +191,13 @@ app.post('/api/items', (req, res) => {
 
   const result = db.prepare(`
     INSERT INTO items (
-      barcode, name, description, image_url, category,
+      barcode, name, description, image_url, category, shelf,
       buy_price, buy_date, sell_price, sell_date,
       shipping_cost, selling_platform, platform_fee_pct,
       ebay_avg_price, ebay_low_price, ebay_high_price,
       status, notes, quantity
     ) VALUES (
-      @barcode, @name, @description, @image_url, @category,
+      @barcode, @name, @description, @image_url, @category, @shelf,
       @buy_price, @buy_date, @sell_price, @sell_date,
       @shipping_cost, @selling_platform, @platform_fee_pct,
       @ebay_avg_price, @ebay_low_price, @ebay_high_price,
@@ -203,7 +206,8 @@ app.post('/api/items', (req, res) => {
   `).run({
     barcode: barcode || null, name,
     description: description || null, image_url: image_url || null,
-    category: category || null, buy_price: buy_price || null,
+    category: category || null, shelf: shelf || null,
+    buy_price: buy_price || null,
     buy_date: buy_date || null, sell_price: sell_price || null,
     sell_date: sell_date || null, shipping_cost: shipping_cost || 0,
     selling_platform: selling_platform || null, platform_fee_pct: platform_fee_pct || 0,
@@ -221,7 +225,7 @@ app.put('/api/items/:id', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   const {
-    barcode, name, description, image_url, category,
+    barcode, name, description, image_url, category, shelf,
     buy_price, buy_date, sell_price, sell_date,
     shipping_cost, selling_platform, platform_fee_pct,
     ebay_avg_price, ebay_low_price, ebay_high_price,
@@ -231,7 +235,7 @@ app.put('/api/items/:id', (req, res) => {
   db.prepare(`
     UPDATE items SET
       barcode = @barcode, name = @name, description = @description,
-      image_url = @image_url, category = @category,
+      image_url = @image_url, category = @category, shelf = @shelf,
       buy_price = @buy_price, buy_date = @buy_date,
       sell_price = @sell_price, sell_date = @sell_date,
       shipping_cost = @shipping_cost, selling_platform = @selling_platform,
@@ -244,7 +248,7 @@ app.put('/api/items/:id', (req, res) => {
   `).run({
     id: req.params.id,
     barcode: barcode || null, name, description: description || null,
-    image_url: image_url || null, category: category || null,
+    image_url: image_url || null, category: category || null, shelf: shelf || null,
     buy_price: buy_price || null, buy_date: buy_date || null,
     sell_price: sell_price || null, sell_date: sell_date || null,
     shipping_cost: shipping_cost || 0, selling_platform: selling_platform || null,
@@ -699,5 +703,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.2 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.3 running on port ${PORT}`);
 });

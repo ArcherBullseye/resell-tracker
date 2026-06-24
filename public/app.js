@@ -157,6 +157,7 @@ function renderCard(item) {
         <div class="platform-row">
           ${platformHtml}
           ${daysHtml}
+          ${item.shelf ? `<span class="shelf-badge">&#128230; ${esc(item.shelf)}</span>` : ''}
         </div>
         ${ebayLiveRow}
         <div class="item-actions">
@@ -239,6 +240,7 @@ async function loadItemIntoForm(id) {
   }
   document.getElementById('item-name').value = item.name || '';
   document.getElementById('item-category').value = item.category || '';
+  document.getElementById('item-shelf').value = item.shelf || '';
   document.getElementById('item-image').value = item.image_url || '';
   document.getElementById('item-notes').value = item.notes || '';
   document.getElementById('buy-price').value = item.buy_price || '';
@@ -280,7 +282,7 @@ function closeOnBackdrop(e) {
 }
 
 function clearForm() {
-  ['barcode','item-name','item-category','item-image','item-notes',
+  ['barcode','item-name','item-category','item-shelf','item-image','item-notes',
    'buy-price','buy-date','sell-price','sell-date','shipping-cost',
    'item-id','ebay-avg-val','ebay-low-val','ebay-high-val','search-name',
    'item-quantity'].forEach(id => {
@@ -419,6 +421,7 @@ async function saveItem() {
     barcode: document.getElementById('barcode').value.trim() || null,
     name,
     category: document.getElementById('item-category').value.trim() || null,
+    shelf: document.getElementById('item-shelf').value.trim() || null,
     image_url: document.getElementById('item-image').value.trim() || null,
     notes: document.getElementById('item-notes').value.trim() || null,
     buy_price: parseFloat(document.getElementById('buy-price').value) || null,
