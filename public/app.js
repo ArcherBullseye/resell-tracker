@@ -671,7 +671,7 @@ function runScan(page = 1) {
       const hint = data.raw_keys?.length
         ? `<br><small>Page keys: ${esc(data.raw_keys.join(', '))}</small>`
         : '';
-      statusEl.innerHTML = `<div class="scanner-empty">No clearance items found at ${esc(scannerStoreName)} with ${minDiscount}%+ off. Try lowering the discount threshold.${hint}</div>`;
+      statusEl.innerHTML = `<div class="scanner-empty">No deals found at ${esc(scannerStoreName)} with ${minDiscount}%+ off. Try lowering the discount threshold.${hint}</div>`;
       return;
     }
 

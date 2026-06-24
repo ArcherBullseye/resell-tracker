@@ -662,14 +662,14 @@ app.get('/api/lowes/stores', async (req, res) => {
   }
 });
 
-// Core clearance scan — log callback receives (msg, level) in real time
+// Core deals scan — log callback receives (msg, level) in real time
 async function runLowesCleared(storeId, minDiscount, category, page, log = noop) {
-  const offset    = (page - 1) * 48;
-  const catSuffix = category ? `-${category}` : '';
+  const offset = (page - 1) * 48;
+  // Lowe's renamed "Clearance" to "Deals" — updated URL from live site
+  const base = `https://www.lowes.com/pl/Deals/1611079983848?catalog=4294936478&storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}`;
   const urls = [
-    `https://www.lowes.com/l/sale/clearance${catSuffix}?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`,
-    `https://www.lowes.com/l/sale/clearance-items?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`,
-    `https://www.lowes.com/pl/Clearance/4294967118?storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}`,
+    base,
+    `https://www.lowes.com/pl/Deals/1611079983848?catalog=4294936478&storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`,
   ];
 
   log(`Starting scan — store #${storeId}, min discount ${minDiscount}%, page ${page}`);
@@ -809,5 +809,5 @@ setTimeout(() => {
 }, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Resell Tracker v1.2.7 running on port ${PORT}`);
+  console.log(`Resell Tracker v1.2.8 running on port ${PORT}`);
 });
