@@ -763,6 +763,27 @@ function switchImportRetailer(retailer) {
   });
 }
 
+// Test whether the SERVER can reach Home Depot with your cookies (gate for scheduled scanning).
+async function testHdAccess() {
+  const ta = document.getElementById('hd-cookies');
+  const cookies = ta.value.trim();
+  const resEl = document.getElementById('hd-test-result');
+  const btn = document.getElementById('hd-test-btn');
+  if (!cookies) { resEl.innerHTML = '<span class="key-missing">Paste your Home Depot cookies first (Cookie-Editor → Export → JSON).</span>'; return; }
+  btn.disabled = true;
+  resEl.innerHTML = '<span style="color:var(--text-dim)">Testing… the server is opening Home Depot in its browser (~30–40s)…</span>';
+  try {
+    const r = await api('/api/hd/test-access', 'POST', { cookies });
+    btn.disabled = false;
+    resEl.innerHTML = r.ok
+      ? `<span class="key-ok">&#10003; ${esc(r.message)}</span>`
+      : `<span class="key-missing">&#10007; ${esc(r.message || r.error || 'Blocked')}</span>`;
+  } catch (e) {
+    btn.disabled = false;
+    resEl.innerHTML = `<span class="key-missing">Test error: ${esc(e.message || 'failed')}</span>`;
+  }
+}
+
 // Imported deals are kept here so the eBay comparison can enrich + re-sort them.
 let _importedDeals = [];
 

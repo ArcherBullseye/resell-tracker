@@ -177,6 +177,17 @@
               <strong>2.</strong> On <strong>homedepot.com</strong>, open a clearance / Special Values listing for your store, click the bookmarklet (it "arms"), then click <strong>page 2 / Next</strong> (or change Sort) once — it pages the whole feed automatically (watch the counter, top-right).<br>
               <strong>3.</strong> Paste below and Import.
             </p>
+            <div class="hd-cookie-test" style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+              <div class="scanner-section-title" style="margin-bottom:6px">&#9881;&#65039; Automated scanning (beta)</div>
+              <p class="scanner-import-help" style="margin-bottom:6px">
+                To let the server scan Home Depot on a schedule, it needs your session cookies. Install the free
+                <strong>Cookie-Editor</strong> browser extension, go to <strong>homedepot.com</strong>, click it &rarr;
+                <strong>Export</strong> &rarr; <strong>JSON</strong>, paste below, then test whether the server can reach HD.
+              </p>
+              <textarea id="hd-cookies" class="scanner-input" rows="3" style="width:100%;font-family:monospace;font-size:0.72em;margin-bottom:6px" placeholder="Paste Home Depot cookies (Cookie-Editor JSON export)…" autocomplete="off"></textarea>
+              <button class="btn btn-secondary btn-sm" id="hd-test-btn" onclick="testHdAccess()">Test server access</button>
+              <div id="hd-test-result" class="key-status" style="margin-top:6px"></div>
+            </div>
             </div>
             <textarea id="scanner-import-data" class="scanner-input" rows="3"
                       style="width:100%;font-family:monospace;font-size:0.72em;resize:vertical;margin-bottom:8px"

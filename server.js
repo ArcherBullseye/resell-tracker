@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.16';
+const VERSION = '1.2.17';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -109,6 +109,14 @@ function getSetting(key) {
   return (row && row.value) || process.env[key] || '';
 }
 
+function setSetting(key, value) {
+  db.prepare(`
+    INSERT INTO settings (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key, value);
+}
+
 app.use(express.json({ limit: '12mb' })); // __NEXT_DATA__ blobs from bookmarklet import can be large
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -133,7 +141,7 @@ app.get('/api/settings', (req, res) => {
 });
 
 app.post('/api/settings', (req, res) => {
-  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'LOWES_COOKIES'];
+  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'LOWES_COOKIES', 'HD_COOKIES'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -886,6 +894,92 @@ app.post('/api/lowes/import', (req, res) => {
     res.json({ ...result, retailer, imported: true });
   } catch (err) {
     res.status(500).json({ error: err.message, message: 'Could not read deals from the pasted data.' });
+  }
+});
+
+// Parse cookies from either a Cookie-Editor JSON export (array of {name,value,domain,…})
+// or a plain "name=value; name2=value2" string. Returns Puppeteer setCookie objects.
+function parseCookiesFlexible(str, defaultDomain) {
+  str = (str || '').trim();
+  if (!str) return [];
+  if (str[0] === '[' || str[0] === '{') {
+    try {
+      const parsed = JSON.parse(str);
+      const list = Array.isArray(parsed) ? parsed : (parsed.cookies || []);
+      return list
+        .filter(c => c && c.name)
+        .map(c => ({
+          name:     c.name,
+          value:    String(c.value == null ? '' : c.value),
+          domain:   c.domain || defaultDomain,
+          path:     c.path || '/',
+          httpOnly: !!c.httpOnly,
+          secure:   c.secure !== false,
+        }));
+    } catch { /* fall through to string parsing */ }
+  }
+  return str.split(';').map(c => c.trim()).filter(Boolean).map(c => {
+    const i = c.indexOf('=');
+    if (i < 0) return null;
+    return { name: c.slice(0, i).trim(), value: c.slice(i + 1).trim(), domain: defaultDomain, path: '/' };
+  }).filter(Boolean);
+}
+
+// Test whether the SERVER (real-Chrome Puppeteer) can reach Home Depot with the user's
+// cookies. This is the gate for free scheduled scanning: if HD serves products to the
+// server, we can automate it; if Akamai blocks, we know to go paid/manual.
+app.post('/api/hd/test-access', async (req, res) => {
+  const cookieStr = (req.body && req.body.cookies) || getSetting('HD_COOKIES') || '';
+  const url = (req.body && req.body.url) || 'https://www.homedepot.com/b/Special-Values/N-5yc1vZ7';
+  const cookies = parseCookiesFlexible(cookieStr, '.homedepot.com');
+  if (!cookies.length) {
+    return res.status(400).json({ ok: false, error: 'NO_COOKIES', message: 'Paste your Home Depot cookies first (Cookie-Editor → Export → JSON).' });
+  }
+  // Persist for the eventual scheduler
+  if (req.body && req.body.cookies) setSetting('HD_COOKIES', cookieStr);
+
+  let page;
+  try {
+    const browser = await getBrowser();
+    page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
+    await page.setUserAgent(LOWES_UA);
+    for (const c of cookies) { try { await page.setCookie(c); } catch { /* skip bad cookie */ } }
+
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const hasPods = await page.waitForSelector('[data-testid="product-pod"]', { timeout: 20000 })
+      .then(() => true).catch(() => false);
+
+    const info = await page.evaluate(() => {
+      const pods = document.querySelectorAll('[data-testid="product-pod"]').length;
+      let prods = 0;
+      try {
+        const st = window.__APOLLO_STATE__ || {};
+        prods = Object.keys(st).filter(k => st[k] && st[k].__typename === 'BaseProduct').length;
+      } catch (e) {}
+      const txt = (document.body.innerText || '').slice(0, 3000);
+      const denied = /Access Denied|don't have permission|Pardon Our Interruption|unusual activity|are you a human/i.test(txt);
+      return { pods, prods, denied, title: document.title };
+    });
+
+    const blocked = info.denied || (!hasPods && info.pods === 0 && info.prods === 0);
+    res.json({
+      ok: !blocked,
+      blocked,
+      pods: info.pods,
+      apolloProducts: info.prods,
+      title: info.title,
+      cookieCount: cookies.length,
+      message: blocked
+        ? `Blocked — Home Depot didn't serve products to the server (page: "${info.title}"). Cookies may be incomplete/expired, or server-side is blocked by Akamai.`
+        : `Success — the server loaded ${info.pods || info.prods} products using your cookies. Scheduled HD scanning is viable! 🎉`,
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message, message: 'Test failed: ' + err.message });
+  } finally {
+    if (page) await page.close().catch(() => {});
   }
 });
 
