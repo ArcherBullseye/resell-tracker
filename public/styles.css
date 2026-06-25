@@ -1201,6 +1201,10 @@ textarea { resize: vertical; }
 .scan-badge-orange { background: rgba(232,119,34,0.15); color: #e87722; }
 .scan-badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
 .scan-badge-neutral { background: var(--border); color: var(--text-muted); }
+.scan-ebay { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.scan-ebay-none { font-style: italic; opacity: 0.6; }
+.profit-pos { color: var(--green, #1a9e4b); }
+.profit-neg { color: var(--red, #d33); }
 
 .scan-card-name  { font-size: 12px; font-weight: 500; line-height: 1.4; flex: 1; }
 .scan-card-model { font-size: 10px; color: var(--text-dim); }

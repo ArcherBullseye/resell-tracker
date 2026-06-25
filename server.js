@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.14';
+const VERSION = '1.2.15';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -874,14 +874,16 @@ app.post('/api/lowes/import', (req, res) => {
   }
   try {
     const maxP = (maxPrice != null && maxPrice !== '' && !isNaN(maxPrice)) ? Number(maxPrice) : null;
-    // New format from the grabber bookmarklet: { source:'lowes-domgrab', products:[...] }
-    const result = (obj && obj.source === 'lowes-domgrab' && Array.isArray(obj.products))
+    // Grabber bookmarklet format: { source:'<retailer>-domgrab', retailer, products:[...] }
+    const isGrab = obj && typeof obj.source === 'string' && obj.source.endsWith('-domgrab') && Array.isArray(obj.products);
+    const retailer = isGrab ? (obj.retailer || obj.source.replace(/-domgrab$/, '')) : 'lowes';
+    const result = isGrab
       ? filterGrabbedProducts(obj.products, maxP)
       : parseProducts(obj, parseFloat(minDiscount)); // legacy __NEXT_DATA__ fallback
     if (!result.products?.length && !result.total) {
-      return res.json({ ...result, imported: true, message: 'No deals found in the pasted data. Make sure the Lowe\'s deals page finished loading (scroll down once) before clicking the bookmarklet.' });
+      return res.json({ ...result, retailer, imported: true, message: 'No deals found in the pasted data. Make sure the page finished loading (scroll down once) before clicking the bookmarklet.' });
     }
-    res.json({ ...result, imported: true });
+    res.json({ ...result, retailer, imported: true });
   } catch (err) {
     res.status(500).json({ error: err.message, message: 'Could not read deals from the pasted data.' });
   }

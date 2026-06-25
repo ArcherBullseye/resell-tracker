@@ -741,17 +741,64 @@ async function importDeals() {
       return;
     }
 
-    const withDisc = data.products.filter(p => p.discount_pct != null && p.discount_pct > 0).length;
-    const discNote = withDisc ? `, ${withDisc} with a known discount` : '';
+    _importedDeals = data.products;
     const priceNote = maxPrice ? ` under $${maxPrice}` : '';
-    statusEl.innerHTML = `<div class="scanner-count">Imported <strong>${data.products.length}</strong> deals${priceNote} (from ${data.total} grabbed${discNote}). Add ones worth flipping to your tracker, then check eBay resale.</div>`;
-    gridEl.innerHTML   = data.products.map(renderScanCard).join('');
+    statusEl.innerHTML = `<div class="scanner-count">Imported <strong>${data.products.length}</strong> deals${priceNote} (from ${data.total} grabbed). <button class="btn btn-primary btn-xs" id="ebay-compare-btn" onclick="compareAllToEbay()">&#128176; Compare all to eBay</button></div>`;
+    renderDealGrid();
     ta.value = ''; // clear the big blob once imported
   } catch (err) {
     importBtn.disabled = false;
-    const msg = err?.message || 'Import failed. Re-copy with the bookmarklet on a Lowe\'s deals page.';
+    const msg = err?.message || 'Import failed. Re-grab with the bookmarklet on a Lowe\'s deals page.';
     statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Import failed</strong><br>${esc(msg)}</div>`;
   }
+}
+
+// Imported deals are kept here so the eBay comparison can enrich + re-sort them.
+let _importedDeals = [];
+
+function renderDealGrid() {
+  document.getElementById('scanner-grid').innerHTML = _importedDeals.map(renderScanCard).join('');
+}
+
+// Build an eBay search query from a Lowe's product: brand + name, parentheticals
+// and odd punctuation stripped (Lowe's names are noisy, e.g. "( 5.0 Ah 5.0 Ah )").
+function ebayQuery(p) {
+  return `${p.category ? p.category + ' ' : ''}${p.name || ''}`
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^\w\s.\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+// Compare every imported deal to its eBay sold-price average, estimate profit
+// (net of ~13% eBay fee), then re-sort best-first. Sequential to respect eBay rate limits.
+async function compareAllToEbay() {
+  if (!_importedDeals.length) return;
+  const btn      = document.getElementById('ebay-compare-btn');
+  const statusEl = document.getElementById('scanner-status');
+  if (btn) btn.disabled = true;
+  const total = _importedDeals.length;
+
+  for (let i = 0; i < total; i++) {
+    const p = _importedDeals[i];
+    statusEl.innerHTML = `<div class="scanner-count">Checking eBay sold prices… ${i + 1}/${total}</div>`;
+    try {
+      const r = await api('/api/lookup/ebay?q=' + encodeURIComponent(ebayQuery(p)));
+      if (r && r.found) {
+        p.ebay = { found: true, avg: r.avg, low: r.low, high: r.high, count: r.count };
+        if (p.now_price != null) p.est_profit = +(r.avg * 0.87 - p.now_price).toFixed(2);
+      } else {
+        p.ebay = { found: false };
+      }
+    } catch { p.ebay = { found: false }; }
+  }
+
+  // Best margins first; items with no eBay match sink to the bottom.
+  _importedDeals.sort((a, b) => (b.est_profit ?? -1e9) - (a.est_profit ?? -1e9));
+  const winners = _importedDeals.filter(p => p.est_profit != null && p.est_profit > 0).length;
+  statusEl.innerHTML = `<div class="scanner-count">eBay check done — <strong>${winners}</strong> of ${total} look profitable (sorted best-first). Green = eBay sold avg beats the Lowe's price after ~13% fee.</div>`;
+  renderDealGrid();
 }
 
 function renderScanCard(item) {
@@ -763,6 +810,17 @@ function renderScanCard(item) {
   const imgHtml = item.image
     ? `<img class="scan-card-img" src="${esc(item.image)}" onerror="this.style.display='none'" />`
     : '<div class="scan-card-img-ph">&#127968;</div>';
+  let ebayHtml = '';
+  if (item.ebay) {
+    if (item.ebay.found) {
+      const profit = item.now_price != null ? +(item.ebay.avg * 0.87 - item.now_price).toFixed(2) : null;
+      const cls = profit == null ? '' : (profit > 0 ? 'profit-pos' : 'profit-neg');
+      const profitTxt = profit == null ? '' : ` · <strong class="${cls}">${profit > 0 ? '+' : ''}${fmt(profit)} est</strong>`;
+      ebayHtml = `<div class="scan-ebay">eBay sold ~${fmt(item.ebay.avg)} (${item.ebay.count})${profitTxt}</div>`;
+    } else {
+      ebayHtml = `<div class="scan-ebay scan-ebay-none">No eBay sales found</div>`;
+    }
+  }
   return `
     <div class="scan-card">
       ${imgHtml}
@@ -775,6 +833,7 @@ function renderScanCard(item) {
           ${item.was_price ? `<span class="scan-was">${fmt(item.was_price)}</span>` : ''}
           <span class="scan-now">${item.now_price ? fmt(item.now_price) : '—'}</span>
         </div>
+        ${ebayHtml}
         <div class="scan-card-actions">
           ${item.url ? `<a class="btn btn-ghost btn-xs" href="${esc(item.url)}" target="_blank">View &#8599;</a>` : ''}
           <button class="btn btn-primary btn-xs" onclick='addScanItem(${JSON.stringify({ name: item.name, image: item.image, category: item.category, now_price: item.now_price, model: item.model }).replace(/'/g, "&#39;")})'>+ Add to Tracker</button>
