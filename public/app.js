@@ -753,6 +753,16 @@ async function importDeals() {
   }
 }
 
+// Toggle the Import-from-Browser panel between retailers (Lowe's / Home Depot).
+function switchImportRetailer(retailer) {
+  ['lowes', 'homedepot'].forEach(r => {
+    const panel = document.getElementById(`import-panel-${r}`);
+    if (panel) panel.style.display = r === retailer ? 'block' : 'none';
+    const tab = document.getElementById(`rtab-${r}`);
+    if (tab) tab.classList.toggle('active', r === retailer);
+  });
+}
+
 // Imported deals are kept here so the eBay comparison can enrich + re-sort them.
 let _importedDeals = [];
 

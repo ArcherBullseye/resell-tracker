@@ -156,6 +156,11 @@
           <!-- Import from browser (reliable path — bypasses Akamai using your real session) -->
           <div class="scanner-section scanner-import-section">
             <div class="scanner-section-title">&#128203; Import from Browser</div>
+            <div class="rtabs">
+              <button type="button" class="rtab active" id="rtab-lowes" onclick="switchImportRetailer('lowes')">&#128998; Lowe's</button>
+              <button type="button" class="rtab" id="rtab-homedepot" onclick="switchImportRetailer('homedepot')">&#129001; Home Depot</button>
+            </div>
+            <div id="import-panel-lowes">
             <p class="scanner-import-help">
               Lowe's blocks automated scans, so grab deals from your own browser:<br>
               <strong>1.</strong> Drag this button to your browser's bookmark bar (one-time):<br>
@@ -163,6 +168,16 @@
               <strong>2.</strong> On <strong>lowes.com</strong>, open a Deals listing for your store, then click the bookmarklet. It pages through the whole category automatically (watch the counter, top-right) and copies everything in one go.<br>
               <strong>3.</strong> Paste below and Import.
             </p>
+            </div>
+            <div id="import-panel-homedepot" style="display:none">
+            <p class="scanner-import-help">
+              Home Depot has a real product API — this grabs the whole clearance feed with <strong>exact discounts</strong>:<br>
+              <strong>1.</strong> Drag this to your bookmark bar (one-time):<br>
+              <a id="hd-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('homedepot.com')){alert('Open a Home Depot listing page first.');return;}var bar=document.createElement('div');bar.style.cssText='position:fixed;top:10px;right:10px;z-index:2147483647;background:#f96302;color:#fff;font:14px sans-serif;padding:10px 14px;border-radius:8px';bar.textContent='HD grab armed…';document.body.appendChild(bar);var done=false,total=null;function parse(t){var out=[];try{var d=JSON.parse(t);var sm=d&&d.data&&d.data.searchModel;if(sm){var sr=sm.searchReport||sm.metadata||{};var tv=sr.totalProducts||sr.recordCount||sr.totalResults;if(tv!=null&&total==null)total=parseInt(tv);}var ps=(sm&&sm.products)||[];ps.forEach(function(p){var pr=p.pricing||{};var pm=pr.promotion||{};var id=p.identifiers||{};var img=((p.media&&p.media.images&&p.media.images[0]&&p.media.images[0].url)||'').replace('<SIZE>','600');out.push({sku:String(p.itemId||id.itemId||''),name:id.productLabel||'',brand:id.brandName||'',model:id.modelNumber||'',url:id.canonicalUrl?('https://www.homedepot.com'+id.canonicalUrl):'',image:img,now_price:pr.value!=null?pr.value:null,was_price:pr.original!=null?pr.original:null,discount_pct:pm.percentageOff!=null?pm.percentageOff:null});});}catch(e){}return out;}function fin(all){done=true;bar.remove();if(!all.length){alert('No products captured — click Next/Sort once after arming.');return;}var json=JSON.stringify({source:'homedepot-domgrab',retailer:'homedepot',products:all});navigator.clipboard.writeText(json).then(function(){alert('✓ Grabbed '+all.length+' Home Depot deals!\n\nPaste below and Import.');}).catch(function(){var w=window.open('','_blank');w.document.body.innerHTML='<textarea style=&quot;width:100%;height:90vh&quot;></textarea>';w.document.querySelector('textarea').value=json;});}var of=window.fetch;window.fetch=function(){var a=arguments;var u=(a[0]&&a[0].url)?a[0].url:String(a[0]);var init=a[1]||{};var body=init.body;if(!done&&(/opname=searchModel/i.test(u)||(body&&/&quot;operationName&quot;:&quot;searchModel&quot;/.test(String(body))))){window.fetch=of;try{var tmpl=JSON.parse(String(body));var H=init.headers;var all=[],seen={},ps=tmpl.variables.pageSize||24,empties=0,zs=0;bar.textContent='HD grab: paging…';(function loop(i){tmpl.variables.startIndex=i;of(u,{method:'POST',headers:H,credentials:'include',body:JSON.stringify(tmpl)}).then(function(r){return r.text();}).then(function(t){var pr=parse(t);var add=0;pr.forEach(function(p){if(p.sku&&!seen[p.sku]){seen[p.sku]=1;all.push(p);add++;}});bar.textContent='HD grab: '+all.length+' products…';if(pr.length===0){if(empties<1){empties++;return setTimeout(function(){loop(i);},1500);}return fin(all);}empties=0;if(add===0){zs++;if(zs>=2)return fin(all);}else{zs=0;}if(i>2000)return fin(all);setTimeout(function(){loop(i+ps);},500);}).catch(function(){if(empties<1){empties++;return setTimeout(function(){loop(i);},2000);}fin(all);});})(0);}catch(e){bar.remove();alert('grab error: '+e.message);}return of.apply(this,a);}return of.apply(this,a);};alert('HD grab armed. Now click page 2 / Next (or change Sort) ONCE — it grabs the whole list automatically (watch the orange counter).');})();" draggable="true">&#128203; Grab Home Depot Deals</a><br>
+              <strong>2.</strong> On <strong>homedepot.com</strong>, open a clearance / Special Values listing for your store, click the bookmarklet (it "arms"), then click <strong>page 2 / Next</strong> (or change Sort) once — it pages the whole feed automatically (watch the counter, top-right).<br>
+              <strong>3.</strong> Paste below and Import.
+            </p>
+            </div>
             <textarea id="scanner-import-data" class="scanner-input" rows="3"
                       style="width:100%;font-family:monospace;font-size:0.72em;resize:vertical;margin-bottom:8px"
                       placeholder="Paste grabbed deal data here…" autocomplete="off"></textarea>
