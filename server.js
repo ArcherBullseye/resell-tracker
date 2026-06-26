@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.17';
+const VERSION = '1.2.18';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -938,6 +938,11 @@ app.post('/api/hd/test-access', async (req, res) => {
   // Persist for the eventual scheduler
   if (req.body && req.body.cookies) setSetting('HD_COOKIES', cookieStr);
 
+  // Quick sanity check on the cookie set — these two are core Akamai session
+  // cookies. If they're missing, the export was almost certainly incomplete.
+  const cookieNames = cookies.map(c => c.name);
+  const missingCore = ['ak_bmsc', 'bm_sz'].filter(n => !cookieNames.includes(n));
+
   let page;
   try {
     const browser = await getBrowser();
@@ -948,9 +953,41 @@ app.post('/api/hd/test-access', async (req, res) => {
     await page.setUserAgent(LOWES_UA);
     for (const c of cookies) { try { await page.setCookie(c); } catch { /* skip bad cookie */ } }
 
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    const hasPods = await page.waitForSelector('[data-testid="product-pod"]', { timeout: 20000 })
-      .then(() => true).catch(() => false);
+    // Intercept the real searchModel GraphQL API responses (the path the
+    // scheduler would actually use), regardless of how the HTML renders.
+    let smProducts = null;
+    let smStatus = null;
+    page.on('response', async (resp) => {
+      try {
+        if (/opname=searchModel/i.test(resp.url())) {
+          smStatus = resp.status();
+          const j = await resp.json();
+          const n = (((j || {}).data || {}).searchModel || {}).products;
+          if (Array.isArray(n)) smProducts = n.length;
+        }
+      } catch (e) { /* body not JSON / already consumed */ }
+    });
+
+    // 1) Warm up on the homepage so Akamai sees a normal entry, not a cold deep-link.
+    let homeStatus = 0;
+    try {
+      const r = await page.goto('https://www.homedepot.com/', { waitUntil: 'domcontentloaded', timeout: 45000 });
+      homeStatus = r ? r.status() : 0;
+    } catch (e) { /* keep going, capture below */ }
+    await new Promise(r => setTimeout(r, 3000));
+
+    // 2) Navigate to the Special Values PLP — this fires the page's own searchModel call.
+    let plpStatus = 0;
+    try {
+      const r = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      plpStatus = r ? r.status() : 0;
+    } catch (e) { /* keep going, capture below */ }
+
+    // 3) Give searchModel / product pods up to 25s to show up.
+    const deadline = Date.now() + 25000;
+    while (Date.now() < deadline && !(smProducts > 0)) {
+      await new Promise(r => setTimeout(r, 1000));
+    }
 
     const info = await page.evaluate(() => {
       const pods = document.querySelectorAll('[data-testid="product-pod"]').length;
@@ -959,22 +996,32 @@ app.post('/api/hd/test-access', async (req, res) => {
         const st = window.__APOLLO_STATE__ || {};
         prods = Object.keys(st).filter(k => st[k] && st[k].__typename === 'BaseProduct').length;
       } catch (e) {}
-      const txt = (document.body.innerText || '').slice(0, 3000);
-      const denied = /Access Denied|don't have permission|Pardon Our Interruption|unusual activity|are you a human/i.test(txt);
-      return { pods, prods, denied, title: document.title };
+      const txt = (document.body.innerText || '');
+      const denied = /Access Denied|don't have permission|Pardon Our Interruption|unusual activity|are you a human|verify you are a human/i.test(txt);
+      return { pods, prods, denied, title: document.title, preview: txt.slice(0, 400) };
     });
 
-    const blocked = info.denied || (!hasPods && info.pods === 0 && info.prods === 0);
+    const ok = (smProducts > 0) || info.pods > 0 || info.prods > 0;
+    const gotCount = smProducts != null ? smProducts : (info.pods || info.prods);
     res.json({
-      ok: !blocked,
-      blocked,
+      ok,
+      blocked: !ok,
+      searchModelProducts: smProducts,
+      searchModelStatus: smStatus,
       pods: info.pods,
       apolloProducts: info.prods,
+      homeStatus,
+      plpStatus,
       title: info.title,
+      denied: info.denied,
+      preview: info.preview,
+      missingCore,
       cookieCount: cookies.length,
-      message: blocked
-        ? `Blocked — Home Depot didn't serve products to the server (page: "${info.title}"). Cookies may be incomplete/expired, or server-side is blocked by Akamai.`
-        : `Success — the server loaded ${info.pods || info.prods} products using your cookies. Scheduled HD scanning is viable! 🎉`,
+      message: ok
+        ? `Success — the server pulled ${gotCount} products from Home Depot's API using your cookies. Scheduled HD scanning is viable! 🎉`
+        : `Blocked — no products returned. searchModel HTTP ${smStatus || 'n/a'}, homepage HTTP ${homeStatus || 'n/a'}, PLP HTTP ${plpStatus || 'n/a'}, page title "${info.title}".`
+          + (info.denied ? ' Akamai challenge detected on the page.' : '')
+          + (missingCore.length ? ` Your cookie export is missing ${missingCore.join(' & ')} — re-export after the page fully loads.` : ''),
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message, message: 'Test failed: ' + err.message });

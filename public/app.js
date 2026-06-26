@@ -771,13 +771,20 @@ async function testHdAccess() {
   const btn = document.getElementById('hd-test-btn');
   if (!cookies) { resEl.innerHTML = '<span class="key-missing">Paste your Home Depot cookies first (Cookie-Editor → Export → JSON).</span>'; return; }
   btn.disabled = true;
-  resEl.innerHTML = '<span style="color:var(--text-dim)">Testing… the server is opening Home Depot in its browser (~30–40s)…</span>';
+  resEl.innerHTML = '<span style="color:var(--text-dim)">Testing… the server warms up on homedepot.com then calls the API (~60–90s)…</span>';
   try {
     const r = await api('/api/hd/test-access', 'POST', { cookies });
     btn.disabled = false;
-    resEl.innerHTML = r.ok
+    const diag = `<div style="margin-top:4px;font-size:0.72em;color:var(--text-dim)">`
+      + `cookies: ${r.cookieCount ?? '?'}`
+      + (r.missingCore && r.missingCore.length ? ` · <b style="color:var(--danger)">missing ${esc(r.missingCore.join(' & '))}</b>` : '')
+      + (r.searchModelStatus != null ? ` · searchModel HTTP ${r.searchModelStatus}` : '')
+      + (r.plpStatus ? ` · PLP HTTP ${r.plpStatus}` : '')
+      + (r.title ? ` · page: "${esc(r.title)}"` : '')
+      + `</div>`;
+    resEl.innerHTML = (r.ok
       ? `<span class="key-ok">&#10003; ${esc(r.message)}</span>`
-      : `<span class="key-missing">&#10007; ${esc(r.message || r.error || 'Blocked')}</span>`;
+      : `<span class="key-missing">&#10007; ${esc(r.message || r.error || 'Blocked')}</span>`) + diag;
   } catch (e) {
     btn.disabled = false;
     resEl.innerHTML = `<span class="key-missing">Test error: ${esc(e.message || 'failed')}</span>`;

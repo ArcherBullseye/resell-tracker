@@ -180,9 +180,13 @@
             <div class="hd-cookie-test" style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
               <div class="scanner-section-title" style="margin-bottom:6px">&#9881;&#65039; Automated scanning (beta)</div>
               <p class="scanner-import-help" style="margin-bottom:6px">
-                To let the server scan Home Depot on a schedule, it needs your session cookies. Install the free
-                <strong>Cookie-Editor</strong> browser extension, go to <strong>homedepot.com</strong>, click it &rarr;
-                <strong>Export</strong> &rarr; <strong>JSON</strong>, paste below, then test whether the server can reach HD.
+                To let the server scan Home Depot on a schedule, it needs a <strong>complete, fresh</strong> session.
+                Install the free <strong>Cookie-Editor</strong> extension, then:
+                <strong>1.</strong> open <strong>homedepot.com</strong> and go to a Special Values listing — let it fully load.
+                <strong>2.</strong> Click Cookie-Editor &rarr; <strong>Export</strong> &rarr; <strong>JSON</strong>.
+                <strong>3.</strong> Paste below and test <em>within a few minutes</em> (some cookies expire fast).
+                A real session is <strong>25–40 cookies</strong> and must include <code>ak_bmsc</code> &amp; <code>bm_sz</code> —
+                if the test says those are missing, your export was partial; re-export after the page loads.
               </p>
               <textarea id="hd-cookies" class="scanner-input" rows="3" style="width:100%;font-family:monospace;font-size:0.72em;margin-bottom:6px" placeholder="Paste Home Depot cookies (Cookie-Editor JSON export)…" autocomplete="off"></textarea>
               <button class="btn btn-secondary btn-sm" id="hd-test-btn" onclick="testHdAccess()">Test server access</button>
