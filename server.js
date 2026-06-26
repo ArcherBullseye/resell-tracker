@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.18';
+const VERSION = '1.2.19';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -938,10 +938,12 @@ app.post('/api/hd/test-access', async (req, res) => {
   // Persist for the eventual scheduler
   if (req.body && req.body.cookies) setSetting('HD_COOKIES', cookieStr);
 
-  // Quick sanity check on the cookie set — these two are core Akamai session
-  // cookies. If they're missing, the export was almost certainly incomplete.
-  const cookieNames = cookies.map(c => c.name);
-  const missingCore = ['ak_bmsc', 'bm_sz'].filter(n => !cookieNames.includes(n));
+  // Optional: a searchModel request captured verbatim from the user's browser
+  // ({url, headers, body}). When present we replay it server-side — the exact call
+  // the scheduler would make — instead of rendering the (hard-gated) listing page.
+  let apiReq = (req.body && req.body.apiRequest) || null;
+  if (typeof apiReq === 'string') { try { apiReq = JSON.parse(apiReq); } catch (e) { apiReq = null; } }
+  const hasApiReq = apiReq && apiReq.url && apiReq.body;
 
   let page;
   try {
@@ -951,10 +953,83 @@ app.post('/api/hd/test-access', async (req, res) => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
     await page.setUserAgent(LOWES_UA);
-    for (const c of cookies) { try { await page.setCookie(c); } catch { /* skip bad cookie */ } }
+    const setAllCookies = async () => {
+      for (const c of cookies) { try { await page.setCookie(c); } catch { /* skip bad cookie */ } }
+    };
+    await setAllCookies();
 
-    // Intercept the real searchModel GraphQL API responses (the path the
-    // scheduler would actually use), regardless of how the HTML renders.
+    // 1) Warm up on the homepage so we have a real homedepot.com origin to fetch from.
+    let homeStatus = 0;
+    try {
+      const r = await page.goto('https://www.homedepot.com/', { waitUntil: 'domcontentloaded', timeout: 45000 });
+      homeStatus = r ? r.status() : 0;
+    } catch (e) { /* keep going, capture below */ }
+    await new Promise(r => setTimeout(r, 3000));
+
+    // 2a) Preferred path: replay the captured API request directly from page context.
+    if (hasApiReq) {
+      // Re-inject cookies — the homepage's sensor JS may have rotated _abck; this
+      // restores the user's validated cookie right before the call (also mirrors how
+      // the real scheduler would re-set daily cookies before each batch).
+      await setAllCookies();
+
+      // Strip headers the browser forbids fetch() from setting (it would ignore or throw).
+      const FORBIDDEN = ['host', 'cookie', 'content-length', 'connection', 'user-agent', 'referer', 'origin', 'accept-encoding'];
+      const headers = {};
+      Object.keys(apiReq.headers || {}).forEach(k => {
+        if (!FORBIDDEN.includes(k.toLowerCase())) headers[k] = apiReq.headers[k];
+      });
+      if (!Object.keys(headers).some(k => k.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
+
+      // Prefer a same-origin call (www.homedepot.com) to avoid CORS confounds; fall
+      // back to the captured URL (e.g. apionline.homedepot.com) if that doesn't work.
+      const urls = [];
+      try {
+        const u0 = new URL(apiReq.url);
+        urls.push('https://www.homedepot.com' + u0.pathname + u0.search);
+      } catch (e) {}
+      if (!urls.includes(apiReq.url)) urls.push(apiReq.url);
+
+      const out = await page.evaluate(async (urlList, h, b) => {
+        let last = { status: 0, count: null, snippet: 'no attempt' };
+        for (const u of urlList) {
+          try {
+            const r = await fetch(u, { method: 'POST', headers: h, body: b, credentials: 'include' });
+            const text = await r.text();
+            let count = null;
+            try {
+              const j = JSON.parse(text);
+              const p = (((j || {}).data || {}).searchModel || {}).products;
+              if (Array.isArray(p)) count = p.length;
+            } catch (e) {}
+            last = { status: r.status, count, snippet: text.slice(0, 300), url: u };
+            if (r.status === 200 && count > 0) return last;
+          } catch (e) { last = { status: 0, count: null, snippet: 'fetch error: ' + String(e), url: u }; }
+        }
+        return last;
+      }, urls, headers, apiReq.body);
+
+      const ok = out.status === 200 && out.count > 0;
+      const emptyButOk = out.status === 200 && !(out.count > 0);
+      res.json({
+        ok,
+        blocked: !ok,
+        mode: 'api',
+        apiStatus: out.status,
+        apiProducts: out.count,
+        homeStatus,
+        snippet: out.snippet,
+        cookieCount: cookies.length,
+        message: ok
+          ? `Success — the server pulled ${out.count} products straight from Home Depot's API using your cookies. Scheduled HD scanning is viable! 🎉`
+          : emptyButOk
+            ? `API reachable (HTTP 200) but returned no products — likely a query/header shape issue, NOT an Akamai block. This is fixable.`
+            : `Blocked — the API call returned HTTP ${out.status || 'error'} (homepage was HTTP ${homeStatus || 'n/a'}). ${out.status === 403 ? 'Akamai blocked the API server-side.' : 'See details below.'}`,
+      });
+      return;
+    }
+
+    // 2b) Fallback (no captured request): render the listing page and watch its own API call.
     let smProducts = null;
     let smStatus = null;
     page.on('response', async (resp) => {
@@ -968,22 +1043,12 @@ app.post('/api/hd/test-access', async (req, res) => {
       } catch (e) { /* body not JSON / already consumed */ }
     });
 
-    // 1) Warm up on the homepage so Akamai sees a normal entry, not a cold deep-link.
-    let homeStatus = 0;
-    try {
-      const r = await page.goto('https://www.homedepot.com/', { waitUntil: 'domcontentloaded', timeout: 45000 });
-      homeStatus = r ? r.status() : 0;
-    } catch (e) { /* keep going, capture below */ }
-    await new Promise(r => setTimeout(r, 3000));
-
-    // 2) Navigate to the Special Values PLP — this fires the page's own searchModel call.
     let plpStatus = 0;
     try {
       const r = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
       plpStatus = r ? r.status() : 0;
     } catch (e) { /* keep going, capture below */ }
 
-    // 3) Give searchModel / product pods up to 25s to show up.
     const deadline = Date.now() + 25000;
     while (Date.now() < deadline && !(smProducts > 0)) {
       await new Promise(r => setTimeout(r, 1000));
@@ -1006,6 +1071,7 @@ app.post('/api/hd/test-access', async (req, res) => {
     res.json({
       ok,
       blocked: !ok,
+      mode: 'page',
       searchModelProducts: smProducts,
       searchModelStatus: smStatus,
       pods: info.pods,
@@ -1015,13 +1081,10 @@ app.post('/api/hd/test-access', async (req, res) => {
       title: info.title,
       denied: info.denied,
       preview: info.preview,
-      missingCore,
       cookieCount: cookies.length,
       message: ok
-        ? `Success — the server pulled ${gotCount} products from Home Depot's API using your cookies. Scheduled HD scanning is viable! 🎉`
-        : `Blocked — no products returned. searchModel HTTP ${smStatus || 'n/a'}, homepage HTTP ${homeStatus || 'n/a'}, PLP HTTP ${plpStatus || 'n/a'}, page title "${info.title}".`
-          + (info.denied ? ' Akamai challenge detected on the page.' : '')
-          + (missingCore.length ? ` Your cookie export is missing ${missingCore.join(' & ')} — re-export after the page fully loads.` : ''),
+        ? `Success — the server pulled ${gotCount} products using your cookies. Scheduled HD scanning is viable! 🎉`
+        : `Blocked at the listing page (HTTP ${plpStatus || 'n/a'}; homepage was HTTP ${homeStatus || 'n/a'}). For a definitive test, capture the API request with the bookmarklet above and paste it here.`,
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message, message: 'Test failed: ' + err.message });

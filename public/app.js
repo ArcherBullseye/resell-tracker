@@ -767,21 +767,24 @@ function switchImportRetailer(retailer) {
 async function testHdAccess() {
   const ta = document.getElementById('hd-cookies');
   const cookies = ta.value.trim();
+  const apiRequest = (document.getElementById('hd-api-request')?.value || '').trim();
   const resEl = document.getElementById('hd-test-result');
   const btn = document.getElementById('hd-test-btn');
   if (!cookies) { resEl.innerHTML = '<span class="key-missing">Paste your Home Depot cookies first (Cookie-Editor → Export → JSON).</span>'; return; }
   btn.disabled = true;
-  resEl.innerHTML = '<span style="color:var(--text-dim)">Testing… the server warms up on homedepot.com then calls the API (~60–90s)…</span>';
+  resEl.innerHTML = '<span style="color:var(--text-dim)">Testing… the server warms up on homedepot.com then replays the API call (~30–60s)…</span>';
   try {
-    const r = await api('/api/hd/test-access', 'POST', { cookies });
+    const r = await api('/api/hd/test-access', 'POST', { cookies, apiRequest: apiRequest || undefined });
     btn.disabled = false;
     const diag = `<div style="margin-top:4px;font-size:0.72em;color:var(--text-dim)">`
-      + `cookies: ${r.cookieCount ?? '?'}`
-      + (r.missingCore && r.missingCore.length ? ` · <b style="color:var(--danger)">missing ${esc(r.missingCore.join(' & '))}</b>` : '')
-      + (r.searchModelStatus != null ? ` · searchModel HTTP ${r.searchModelStatus}` : '')
-      + (r.plpStatus ? ` · PLP HTTP ${r.plpStatus}` : '')
-      + (r.title ? ` · page: "${esc(r.title)}"` : '')
-      + `</div>`;
+      + `cookies: ${r.cookieCount ?? '?'} · homepage HTTP ${r.homeStatus ?? '?'}`
+      + (r.mode === 'api'
+          ? ` · API HTTP ${r.apiStatus ?? '?'}` + (r.apiProducts != null ? ` · products ${r.apiProducts}` : '')
+          : (r.searchModelStatus != null ? ` · searchModel HTTP ${r.searchModelStatus}` : '')
+            + (r.plpStatus ? ` · PLP HTTP ${r.plpStatus}` : '')
+            + (r.title ? ` · page: "${esc(r.title)}"` : ''))
+      + `</div>`
+      + (r.snippet ? `<div style="margin-top:4px;font-size:0.68em;color:var(--text-dim);white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;border:1px solid var(--border);padding:4px;border-radius:4px">${esc(r.snippet)}</div>` : '');
     resEl.innerHTML = (r.ok
       ? `<span class="key-ok">&#10003; ${esc(r.message)}</span>`
       : `<span class="key-missing">&#10007; ${esc(r.message || r.error || 'Blocked')}</span>`) + diag;

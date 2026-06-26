@@ -180,15 +180,19 @@
             <div class="hd-cookie-test" style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
               <div class="scanner-section-title" style="margin-bottom:6px">&#9881;&#65039; Automated scanning (beta)</div>
               <p class="scanner-import-help" style="margin-bottom:6px">
-                To let the server scan Home Depot on a schedule, it needs a <strong>complete, fresh</strong> session.
-                Install the free <strong>Cookie-Editor</strong> extension, then:
-                <strong>1.</strong> open <strong>homedepot.com</strong> and go to a Special Values listing — let it fully load.
-                <strong>2.</strong> Click Cookie-Editor &rarr; <strong>Export</strong> &rarr; <strong>JSON</strong>.
-                <strong>3.</strong> Paste below and test <em>within a few minutes</em> (some cookies expire fast).
-                A real session is <strong>25–40 cookies</strong> and must include <code>ak_bmsc</code> &amp; <code>bm_sz</code> —
-                if the test says those are missing, your export was partial; re-export after the page loads.
+                This checks whether the server can pull Home Depot deals on its own (for scheduled scanning).
+                It does <strong>not</strong> change the manual grab above. Three steps, all on a HD <strong>Special Values</strong> listing page:
               </p>
-              <textarea id="hd-cookies" class="scanner-input" rows="3" style="width:100%;font-family:monospace;font-size:0.72em;margin-bottom:6px" placeholder="Paste Home Depot cookies (Cookie-Editor JSON export)…" autocomplete="off"></textarea>
+              <p class="scanner-import-help" style="margin-bottom:6px">
+                <strong>1.</strong> Cookies — install the free <strong>Cookie-Editor</strong> extension, open the listing page,
+                click Cookie-Editor &rarr; <strong>Export</strong> &rarr; <strong>JSON</strong>, paste into the first box.<br>
+                <strong>2.</strong> API request — drag this to your bookmarks bar, then on the listing page click it and click
+                <strong>page 2 / Next</strong> once; it copies the exact request &rarr; paste into the second box:
+                <a id="hd-capture-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('homedepot.com')){alert('Open a Home Depot Special Values listing page first.');return;}var done=false;var of=window.fetch;window.fetch=function(){var a=arguments;var u=(a[0]&&a[0].url)?a[0].url:String(a[0]);var init=a[1]||{};var body=init.body;if(!done&&/opname=searchModel/i.test(u)){done=true;window.fetch=of;var hdrs={};try{var H=init.headers;if(H){if(typeof H.forEach==='function'){H.forEach(function(v,k){hdrs[k]=v;});}else{Object.keys(H).forEach(function(k){hdrs[k]=H[k];});}}}catch(e){}var out=JSON.stringify({url:u,headers:hdrs,body:String(body||'')});navigator.clipboard.writeText(out).then(function(){alert('Captured the Home Depot API request. Paste it into the automation box.');}).catch(function(){var w=window.open('','_blank');var t=w.document.createElement('textarea');t.style.cssText='width:100%;height:90vh';t.value=out;w.document.body.appendChild(t);});}return of.apply(this,a);};alert('Capture armed. Now click page 2 / Next (or change Sort) once to trigger a request.');})();" draggable="true">&#128203; Capture HD API request</a><br>
+                <strong>3.</strong> Click <strong>Test server access</strong> (do it within a few minutes — cookies expire fast).
+              </p>
+              <textarea id="hd-cookies" class="scanner-input" rows="3" style="width:100%;font-family:monospace;font-size:0.72em;margin-bottom:6px" placeholder="1) Paste Home Depot cookies (Cookie-Editor JSON export)…" autocomplete="off"></textarea>
+              <textarea id="hd-api-request" class="scanner-input" rows="3" style="width:100%;font-family:monospace;font-size:0.72em;margin-bottom:6px" placeholder="2) Paste the captured API request (from the bookmarklet)…" autocomplete="off"></textarea>
               <button class="btn btn-secondary btn-sm" id="hd-test-btn" onclick="testHdAccess()">Test server access</button>
               <div id="hd-test-result" class="key-status" style="margin-top:6px"></div>
             </div>
