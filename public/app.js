@@ -42,6 +42,7 @@ async function loadStats() {
   document.getElementById('stat-inv-value').textContent = fmt(stats.inventoryValue);
   document.getElementById('stat-invested').textContent = fmt(stats.totalInvested);
   document.getElementById('stat-revenue').textContent = fmt(stats.totalRevenue);
+  document.getElementById('stat-expenses').textContent = fmt(stats.totalExpenses || 0);
   const profitEl = document.getElementById('stat-profit');
   profitEl.textContent = fmt(stats.netProfit);
   profitEl.className = 'stat-value ' + (stats.netProfit >= 0 ? 'profit-pos' : 'profit-neg');
@@ -536,24 +537,16 @@ async function confirmDelete() {
   loadItems();
 }
 
-// ── Lowe's Scanner ────────────────────────────────────────────────────────────
-
-let scanPage = 1;
-let scannerStoreId   = '';
-let scannerStoreName = '';
+// ── Deals Scanner ─────────────────────────────────────────────────────────────
+// Import deals grabbed from your own browser (Lowe's / Home Depot bookmarklets),
+// compare them to eBay sold prices, and add the winners to your tracker.
 
 async function openScanner() {
   document.getElementById('scanner-panel').style.display = 'flex';
   document.body.style.overflow = 'hidden';
-
-  const saved = await api('/api/lowes/settings');
-  if (saved.storeId) setScannerStore(saved.storeId, saved.storeName || `Store #${saved.storeId}`);
-
-  loadSavedFilters();
 }
 
 function closeScanner() {
-  if (_activeScanSource) { _activeScanSource.close(); _activeScanSource = null; }
   document.getElementById('scanner-panel').style.display = 'none';
   document.body.style.overflow = '';
 }
@@ -562,165 +555,32 @@ function scannerCloseOnBackdrop(e) {
   if (e.target === document.getElementById('scanner-panel')) closeScanner();
 }
 
-function setScannerStore(id, name) {
-  scannerStoreId   = id;
-  scannerStoreName = name;
-  document.getElementById('scanner-store-name').textContent = `${name} (#${id})`;
-  document.getElementById('scanner-store-display').style.display = 'flex';
-  document.getElementById('scanner-store-picker').style.display  = 'none';
-  // Persist to settings
-  api('/api/settings', 'POST', { LOWES_STORE_ID: id, LOWES_STORE_NAME: name });
-}
-
-function clearScannerStore() {
-  scannerStoreId = '';
-  scannerStoreName = '';
-  document.getElementById('scanner-store-display').style.display = 'none';
-  document.getElementById('scanner-store-picker').style.display  = 'block';
-}
-
-async function scannerFindStores() {
-  const zip = document.getElementById('scanner-zip').value.trim();
-  if (zip.length < 5) return toast('Enter a 5-digit ZIP code', 'error');
-
-  const el = document.getElementById('scanner-store-results');
-  el.innerHTML = '<div class="scanner-loading">Searching…</div>';
-
-  const data = await api(`/api/lowes/stores?zip=${encodeURIComponent(zip)}`);
-  if (data.error) {
-    el.innerHTML = `<div class="scanner-error">${esc(data.message || data.error)}<br><small>Try entering your store number manually (find it on lowes.com).</small></div>`;
-    return;
-  }
-  if (!data.stores?.length) {
-    el.innerHTML = '<div class="scanner-error">No stores found for that ZIP.</div>';
-    return;
-  }
-
-  el.innerHTML = data.stores.map(s => `
-    <div class="scanner-store-row" onclick="setScannerStore('${esc(s.id)}', '${esc(s.name)}')">
-      <div class="scanner-store-info">
-        <div class="scanner-store-row-name">${esc(s.name)}</div>
-        <div class="scanner-store-row-addr">${esc(s.address)}, ${esc(s.city)}, ${esc(s.state)} ${esc(s.zip)}</div>
-      </div>
-      <div class="scanner-store-row-meta">
-        ${s.distance ? `<span>${s.distance.toFixed(1)} mi</span>` : ''}
-        <span class="scanner-store-row-id">#${esc(s.id)}</span>
-      </div>
-    </div>`).join('');
-}
-
-function scannerSetManualStore() {
-  const id = document.getElementById('scanner-store-id-manual').value.trim();
-  if (!id) return toast('Enter a store number', 'error');
-  setScannerStore(id, `Lowe's Store #${id}`);
-}
-
-let _activeScanSource = null;
-
-function scanLog(msg, level = 'info', ts = '') {
-  const linesEl = document.getElementById('scan-console-lines');
-  const line = document.createElement('div');
-  line.className = `scan-log-line scan-log-${level}`;
-  line.innerHTML = `<span class="scan-log-ts">${ts || new Date().toLocaleTimeString()}</span> ${esc(msg)}`;
-  linesEl.appendChild(line);
-  linesEl.scrollTop = linesEl.scrollHeight;
-}
-
-function runScan(page = 1) {
-  if (!scannerStoreId) return toast('Select a store first', 'error');
-
-  // Cancel any in-progress scan
-  if (_activeScanSource) { _activeScanSource.close(); _activeScanSource = null; }
-
-  scanPage = page;
-  const minDiscount = document.getElementById('scanner-discount').value;
-  const category    = document.getElementById('scanner-category').value;
-
-  const statusEl  = document.getElementById('scanner-status');
-  const gridEl    = document.getElementById('scanner-grid');
-  const paginEl   = document.getElementById('scanner-pagination');
-  const consoleEl = document.getElementById('scan-console');
-  const linesEl   = document.getElementById('scan-console-lines');
-  const scanBtn   = document.getElementById('scanner-scan-btn');
-
-  // Reset UI
-  statusEl.innerHTML    = '';
-  gridEl.innerHTML      = '';
-  paginEl.style.display = 'none';
-  linesEl.innerHTML     = '';
-  consoleEl.style.display = 'block';
-  const emptyEl = document.getElementById('scanner-empty-state');
-  if (emptyEl) emptyEl.style.display = 'none';
-  scanBtn.disabled = true;
-
-  const params = new URLSearchParams({ storeId: scannerStoreId, minDiscount, page, category });
-  const es = new EventSource(`/api/lowes/clearance-stream?${params}`);
-  _activeScanSource = es;
-
-  es.addEventListener('log', e => {
-    const { msg, level, ts } = JSON.parse(e.data);
-    scanLog(msg, level, ts);
+// Toggle the Import-from-Browser panel between retailers (Lowe's / Home Depot).
+function switchImportRetailer(retailer) {
+  ['lowes', 'homedepot'].forEach(r => {
+    const panel = document.getElementById(`import-panel-${r}`);
+    if (panel) panel.style.display = r === retailer ? 'block' : 'none';
+    const tab = document.getElementById(`rtab-${r}`);
+    if (tab) tab.classList.toggle('active', r === retailer);
   });
-
-  es.addEventListener('result', e => {
-    es.close(); _activeScanSource = null;
-    scanBtn.disabled = false;
-    const data = JSON.parse(e.data);
-
-    if (!data.products?.length) {
-      const hint = data.raw_keys?.length
-        ? `<br><small>Page keys: ${esc(data.raw_keys.join(', '))}</small>`
-        : '';
-      statusEl.innerHTML = `<div class="scanner-empty">No deals found at ${esc(scannerStoreName)} with ${minDiscount}%+ off. Try lowering the discount threshold.${hint}</div>`;
-      return;
-    }
-
-    statusEl.innerHTML = `<div class="scanner-count">Found <strong>${data.products.length}</strong> items ${parseInt(minDiscount)}%+ off at ${esc(scannerStoreName)} (page ${page})</div>`;
-    gridEl.innerHTML   = data.products.map(renderScanCard).join('');
-    paginEl.style.display = 'flex';
-    document.getElementById('scan-page-label').textContent  = `Page ${page}`;
-    document.getElementById('scan-prev-btn').disabled = page <= 1;
-    document.getElementById('scan-next-btn').disabled = data.products.length < 10;
-  });
-
-  es.addEventListener('error', e => {
-    if (e.data) {
-      const { message } = JSON.parse(e.data);
-      statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Scan failed</strong><br>${esc(message)}</div>`;
-    }
-    es.close(); _activeScanSource = null;
-    scanBtn.disabled = false;
-  });
-
-  // SSE connection error (network-level)
-  es.onerror = () => {
-    if (es.readyState === EventSource.CLOSED) return;
-    scanLog('Connection lost — scan may have timed out', 'error');
-    statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Connection error</strong><br>Lost connection to server. Check that Resell Tracker is running.</div>`;
-    es.close(); _activeScanSource = null;
-    scanBtn.disabled = false;
-  };
 }
 
 async function importDeals() {
   const ta = document.getElementById('scanner-import-data');
   const raw = ta.value.trim();
-  if (!raw) return toast('Paste deal data first (use the bookmarklet on lowes.com)', 'error');
+  if (!raw) return toast('Paste grabbed deal data first (use a Grab Deals bookmarklet)', 'error');
 
-  // Lowe's no longer exposes discount % reliably, so imports filter by max price instead.
   const maxPriceRaw = document.getElementById('scanner-import-maxprice').value.trim();
   const maxPrice = maxPriceRaw ? parseFloat(maxPriceRaw) : null;
 
   const statusEl  = document.getElementById('scanner-status');
   const gridEl    = document.getElementById('scanner-grid');
-  const paginEl   = document.getElementById('scanner-pagination');
   const importBtn = document.getElementById('scanner-import-btn');
   const emptyEl   = document.getElementById('scanner-empty-state');
 
   // Reset UI
-  statusEl.innerHTML    = '';
-  gridEl.innerHTML      = '';
-  paginEl.style.display = 'none';
+  statusEl.innerHTML = '';
+  gridEl.innerHTML   = '';
   if (emptyEl) emptyEl.style.display = 'none';
   importBtn.disabled = true;
   statusEl.innerHTML = '<div class="scanner-count">Parsing imported deals…</div>';
@@ -736,8 +596,7 @@ async function importDeals() {
     }
 
     if (!data.products?.length) {
-      const hint = data.raw_keys?.length ? `<br><small>Page keys: ${esc(data.raw_keys.join(', '))}</small>` : '';
-      statusEl.innerHTML = `<div class="scanner-empty">${esc(data.message || `No deals found in the pasted data. Make sure the Lowe's page loaded (scroll down once) before grabbing.`)}${hint}</div>`;
+      statusEl.innerHTML = `<div class="scanner-empty">${esc(data.message || 'No deals found in the pasted data. Make sure the page finished loading (scroll down once) before grabbing.')}</div>`;
       return;
     }
 
@@ -748,59 +607,8 @@ async function importDeals() {
     ta.value = ''; // clear the big blob once imported
   } catch (err) {
     importBtn.disabled = false;
-    const msg = err?.message || 'Import failed. Re-grab with the bookmarklet on a Lowe\'s deals page.';
+    const msg = err?.message || 'Import failed. Re-grab with a Grab Deals bookmarklet.';
     statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Import failed</strong><br>${esc(msg)}</div>`;
-  }
-}
-
-// Toggle the Import-from-Browser panel between retailers (Lowe's / Home Depot).
-function switchImportRetailer(retailer) {
-  ['lowes', 'homedepot'].forEach(r => {
-    const panel = document.getElementById(`import-panel-${r}`);
-    if (panel) panel.style.display = r === retailer ? 'block' : 'none';
-    const tab = document.getElementById(`rtab-${r}`);
-    if (tab) tab.classList.toggle('active', r === retailer);
-  });
-}
-
-// Test whether the SERVER can reach Home Depot with your cookies (gate for scheduled scanning).
-async function testHdAccess() {
-  const ta = document.getElementById('hd-cookies');
-  const cookies = ta.value.trim();
-  const apiRequest = (document.getElementById('hd-api-request')?.value || '').trim();
-  const resEl = document.getElementById('hd-test-result');
-  const btn = document.getElementById('hd-test-btn');
-  if (!cookies) { resEl.innerHTML = '<span class="key-missing">Paste your Home Depot cookies first (Cookie-Editor → Export → JSON).</span>'; return; }
-  btn.disabled = true;
-  resEl.innerHTML = '<span style="color:var(--text-dim)">Testing… the server warms up on homedepot.com then replays the API call (~30–60s)…</span>';
-  try {
-    const r = await api('/api/hd/test-access', 'POST', { cookies, apiRequest: apiRequest || undefined });
-    btn.disabled = false;
-    let diag = `<div style="margin-top:4px;font-size:0.72em;color:var(--text-dim)">`
-      + `cookies: ${r.cookieCount ?? '?'} · homepage HTTP ${r.homeStatus ?? '?'}`
-      + (r.egressIp ? ` · server IP ${esc(r.egressIp)}` : '')
-      + `</div>`;
-    if (r.mode === 'api-sweep' && Array.isArray(r.variants)) {
-      diag += r.variants.map(v =>
-        `<div style="margin-top:4px;font-size:0.68em;color:var(--text-dim)">`
-        + `<b>${esc(v.name)}</b>: HTTP ${v.status ?? '?'}${v.count != null ? ` · products ${v.count}` : ''}`
-        + `<div style="white-space:pre-wrap;word-break:break-all;max-height:60px;overflow:auto;border:1px solid var(--border);padding:3px;border-radius:4px;margin-top:2px">${esc(v.snippet || '')}</div>`
-        + `</div>`).join('');
-    } else {
-      diag += (r.searchModelStatus != null || r.plpStatus || r.title)
-        ? `<div style="margin-top:4px;font-size:0.72em;color:var(--text-dim)">`
-          + (r.searchModelStatus != null ? `searchModel HTTP ${r.searchModelStatus}` : '')
-          + (r.plpStatus ? ` · PLP HTTP ${r.plpStatus}` : '')
-          + (r.title ? ` · page: "${esc(r.title)}"` : '') + `</div>`
-        : '';
-      if (r.snippet) diag += `<div style="margin-top:4px;font-size:0.68em;color:var(--text-dim);white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;border:1px solid var(--border);padding:4px;border-radius:4px">${esc(r.snippet)}</div>`;
-    }
-    resEl.innerHTML = (r.ok
-      ? `<span class="key-ok">&#10003; ${esc(r.message)}</span>`
-      : `<span class="key-missing">&#10007; ${esc(r.message || r.error || 'Blocked')}</span>`) + diag;
-  } catch (e) {
-    btn.disabled = false;
-    resEl.innerHTML = `<span class="key-missing">Test error: ${esc(e.message || 'failed')}</span>`;
   }
 }
 
@@ -811,8 +619,8 @@ function renderDealGrid() {
   document.getElementById('scanner-grid').innerHTML = _importedDeals.map(renderScanCard).join('');
 }
 
-// Build an eBay search query from a Lowe's product: brand + name, parentheticals
-// and odd punctuation stripped (Lowe's names are noisy, e.g. "( 5.0 Ah 5.0 Ah )").
+// Build an eBay search query from a product: brand + name, parentheticals and odd
+// punctuation stripped (retailer names are noisy, e.g. "( 5.0 Ah 5.0 Ah )").
 function ebayQuery(p) {
   return `${p.category ? p.category + ' ' : ''}${p.name || ''}`
     .replace(/\([^)]*\)/g, ' ')
@@ -848,7 +656,7 @@ async function compareAllToEbay() {
   // Best margins first; items with no eBay match sink to the bottom.
   _importedDeals.sort((a, b) => (b.est_profit ?? -1e9) - (a.est_profit ?? -1e9));
   const winners = _importedDeals.filter(p => p.est_profit != null && p.est_profit > 0).length;
-  statusEl.innerHTML = `<div class="scanner-count">eBay check done — <strong>${winners}</strong> of ${total} look profitable (sorted best-first). Green = eBay sold avg beats the Lowe's price after ~13% fee.</div>`;
+  statusEl.innerHTML = `<div class="scanner-count">eBay check done — <strong>${winners}</strong> of ${total} look profitable (sorted best-first). Green = eBay sold avg beats the buy price after ~13% fee.</div>`;
   renderDealGrid();
 }
 
@@ -893,102 +701,6 @@ function renderScanCard(item) {
     </div>`;
 }
 
-// ── Saved Filters ─────────────────────────────────────────────────────────────
-
-function saveCurrentFilter() {
-  if (!scannerStoreId) return toast('Select a store first', 'error');
-  document.getElementById('filter-save-name').value = '';
-  document.getElementById('save-filter-form').style.display = 'block';
-  document.getElementById('filter-save-name').focus();
-}
-
-async function confirmSaveFilter() {
-  const name = document.getElementById('filter-save-name').value.trim();
-  if (!name) return toast('Enter a filter name', 'error');
-  const body = {
-    name,
-    store_id:        scannerStoreId,
-    store_name:      scannerStoreName,
-    min_discount:    parseInt(document.getElementById('scanner-discount').value),
-    category:        document.getElementById('scanner-category').value,
-    interval_hours:  0,
-    notify_telegram: document.getElementById('filter-notify-tg').checked ? 1 : 0,
-  };
-  await api('/api/scanner/filters', 'POST', body);
-  document.getElementById('save-filter-form').style.display = 'none';
-  toast('Filter saved', 'success');
-  loadSavedFilters();
-}
-
-async function loadSavedFilters() {
-  const filters = await api('/api/scanner/filters');
-  const section = document.getElementById('scanner-saved-section');
-  const list    = document.getElementById('scanner-filters-list');
-
-  if (!filters.length) { section.style.display = 'none'; return; }
-
-  section.style.display = 'block';
-  list.innerHTML = filters.map(renderFilterCard).join('');
-}
-
-function renderFilterCard(f) {
-  const lastRun = f.last_run ? fmtDate(f.last_run.split(' ')[0]) : 'Never';
-  return `
-    <div class="filter-card" id="filter-card-${f.id}">
-      <div class="filter-card-top">
-        <span class="filter-card-name">${esc(f.name)}</span>
-        <button class="btn-icon-tiny" onclick="deleteSavedFilter(${f.id})" title="Delete">&#128465;</button>
-      </div>
-      <div class="filter-card-meta">${f.min_discount}%+ off${f.category ? ' · ' + esc(f.category) : ''}</div>
-      <div class="filter-card-sub">Last: ${lastRun}${f.last_count ? ` · ${f.last_count} items` : ''}${f.notify_telegram ? ' · &#128225;' : ''}</div>
-      <div class="filter-card-bottom">
-        <select class="filter-interval-sel" onchange="updateFilterInterval(${f.id}, this.value)">
-          <option value="0"  ${f.interval_hours===0  ?'selected':''}>Manual</option>
-          <option value="2"  ${f.interval_hours===2  ?'selected':''}>Every 2h</option>
-          <option value="4"  ${f.interval_hours===4  ?'selected':''}>Every 4h</option>
-          <option value="6"  ${f.interval_hours===6  ?'selected':''}>Every 6h</option>
-          <option value="12" ${f.interval_hours===12 ?'selected':''}>Every 12h</option>
-          <option value="24" ${f.interval_hours===24 ?'selected':''}>Every 24h</option>
-        </select>
-        <button class="btn btn-ghost btn-xs" onclick="loadFilterIntoScanner(${f.id}, '${esc(f.store_id)}', '${esc(f.store_name)}', ${f.min_discount}, '${esc(f.category)}')">Load</button>
-        <button class="btn btn-secondary btn-xs" onclick="runSavedFilter(${f.id})">&#9654; Run</button>
-      </div>
-    </div>`;
-}
-
-async function updateFilterInterval(id, hours) {
-  const filter = (await api('/api/scanner/filters')).find(f => f.id === id);
-  if (!filter) return;
-  await api(`/api/scanner/filters/${id}`, 'PUT', { ...filter, interval_hours: parseInt(hours) });
-  toast(parseInt(hours) > 0 ? `Scheduled every ${hours}h` : 'Set to manual', 'success');
-}
-
-async function runSavedFilter(id) {
-  const card = document.getElementById(`filter-card-${id}`);
-  if (card) card.style.opacity = '0.5';
-  const result = await api(`/api/scanner/filters/${id}/run`, 'POST');
-  if (card) card.style.opacity = '1';
-  if (result.ok) {
-    toast(`Scan complete — ${result.count} item${result.count !== 1 ? 's' : ''} found`, 'success');
-    loadSavedFilters();
-  } else {
-    toast(result.error || 'Scan failed', 'error');
-  }
-}
-
-async function deleteSavedFilter(id) {
-  if (!confirm('Delete this saved filter?')) return;
-  await api(`/api/scanner/filters/${id}`, 'DELETE');
-  loadSavedFilters();
-}
-
-function loadFilterIntoScanner(id, storeId, storeName, minDiscount, category) {
-  setScannerStore(storeId, storeName || `Store #${storeId}`);
-  document.getElementById('scanner-discount').value = minDiscount;
-  document.getElementById('scanner-discount-label').textContent = minDiscount + '%';
-  document.getElementById('scanner-category').value = category || '';
-}
-
 function addScanItem(item) {
   closeScanner();
   openModal('add');
@@ -998,6 +710,83 @@ function addScanItem(item) {
   if (item.now_price) document.getElementById('buy-price').value    = item.now_price;
   if (item.image)    previewImage(item.image);
   updateProfitPreview();
+}
+
+// ── Expenses ──────────────────────────────────────────────────────────────────
+
+async function openExpenses() {
+  document.getElementById('expenses-modal').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  document.getElementById('expense-date').value = today();
+  document.getElementById('expense-desc').value = '';
+  document.getElementById('expense-amount').value = '';
+  document.getElementById('expense-category').value = '';
+  await loadExpenses();
+}
+
+function closeExpenses() {
+  document.getElementById('expenses-modal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function expensesCloseOnBackdrop(e) {
+  if (e.target === e.currentTarget) closeExpenses();
+}
+
+async function loadExpenses() {
+  const data = await api('/api/expenses');
+  const list = document.getElementById('expenses-list');
+  const expenses = data.expenses || [];
+
+  document.getElementById('expenses-total-badge').textContent =
+    expenses.length ? `${expenses.length} logged · ${fmt(data.total)} total` : '';
+  document.getElementById('expenses-grand-total').innerHTML =
+    expenses.length ? `Total expenses: <strong class="profit-neg">${fmt(data.total)}</strong>` : '';
+
+  if (!expenses.length) {
+    list.innerHTML = '<div class="expenses-empty">No expenses logged yet.</div>';
+    return;
+  }
+  list.innerHTML = expenses.map(renderExpenseRow).join('');
+}
+
+function renderExpenseRow(e) {
+  return `
+    <div class="expense-row">
+      <div class="expense-row-main">
+        <div class="expense-row-desc">${esc(e.description)}${e.category ? ` <span class="expense-row-cat">${esc(e.category)}</span>` : ''}</div>
+        <div class="expense-row-date">${esc(fmtDate(e.date) || e.date || '')}</div>
+      </div>
+      <div class="expense-row-amount profit-neg">${fmt(e.amount)}</div>
+      <button class="btn-icon-tiny" onclick="deleteExpense(${e.id})" title="Delete">&#128465;</button>
+    </div>`;
+}
+
+async function addExpense() {
+  const description = document.getElementById('expense-desc').value.trim();
+  const amount = document.getElementById('expense-amount').value.trim();
+  const date = document.getElementById('expense-date').value;
+  const category = document.getElementById('expense-category').value.trim();
+
+  if (!description) return toast('Enter a description', 'error');
+  if (amount === '' || isNaN(parseFloat(amount))) return toast('Enter a valid amount', 'error');
+
+  const r = await api('/api/expenses', 'POST', { description, amount: parseFloat(amount), date, category });
+  if (r.error) return toast(r.error, 'error');
+
+  document.getElementById('expense-desc').value = '';
+  document.getElementById('expense-amount').value = '';
+  document.getElementById('expense-category').value = '';
+  toast('Expense added', 'success');
+  await loadExpenses();
+  loadStats();
+}
+
+async function deleteExpense(id) {
+  if (!confirm('Delete this expense?')) return;
+  await api(`/api/expenses/${id}`, 'DELETE');
+  await loadExpenses();
+  loadStats();
 }
 
 // ── Global Search ─────────────────────────────────────────────────────────────

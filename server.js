@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.20';
+const VERSION = '1.3.1';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -76,6 +76,16 @@ const MIGRATIONS = [
 
   // v6 — shelf location for physical storage
   `ALTER TABLE items ADD COLUMN shelf TEXT`,
+
+  // v7 — business expenses (supplies, fees, subscriptions); deducted from net profit
+  `CREATE TABLE IF NOT EXISTS expenses (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT,
+    description TEXT NOT NULL,
+    category    TEXT DEFAULT '',
+    amount      REAL NOT NULL DEFAULT 0,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+  )`,
 ];
 
 function runMigrations() {
@@ -132,16 +142,12 @@ app.get('/api/settings', (req, res) => {
       : { configured: false, preview: '' };
   }
   result.TELEGRAM_CHAT_ID = getSetting('TELEGRAM_CHAT_ID');
-  const lowesCookies = getSetting('LOWES_COOKIES');
-  result.LOWES_COOKIES = lowesCookies
-    ? { configured: true, count: lowesCookies.split(';').filter(Boolean).length }
-    : { configured: false, count: 0 };
   result.VERSION = VERSION;
   res.json(result);
 });
 
 app.post('/api/settings', (req, res) => {
-  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'LOWES_STORE_ID', 'LOWES_STORE_NAME', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'LOWES_COOKIES', 'HD_COOKIES'];
+  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -332,12 +338,36 @@ app.get('/api/stats', (req, res) => {
     "SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100 * COALESCE(quantity_sold,1)), 0) as s FROM items WHERE quantity_sold > 0"
   ).get().s;
   const costOfSold = db.prepare("SELECT COALESCE(SUM(buy_price * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
+  const totalExpenses = db.prepare('SELECT COALESCE(SUM(amount),0) as s FROM expenses').get().s;
 
   res.json({
     total, inventory, sold, inventoryValue, totalInvested, totalRevenue,
-    netProfit: totalRevenue - costOfSold - totalShipping - totalFees,
-    totalShipping, totalFees
+    netProfit: totalRevenue - costOfSold - totalShipping - totalFees - totalExpenses,
+    totalShipping, totalFees, totalExpenses
   });
+});
+
+// ── Expenses ───────────────────────────────────────────────────────────────────
+
+app.get('/api/expenses', (req, res) => {
+  const rows = db.prepare('SELECT * FROM expenses ORDER BY date DESC, id DESC').all();
+  const total = rows.reduce((s, r) => s + (r.amount || 0), 0);
+  res.json({ expenses: rows, total });
+});
+
+app.post('/api/expenses', (req, res) => {
+  const { date, description, category, amount } = req.body;
+  const amt = Number(amount);
+  if (!description || !String(description).trim()) return res.status(400).json({ error: 'description required' });
+  if (amount == null || isNaN(amt)) return res.status(400).json({ error: 'valid amount required' });
+  const r = db.prepare('INSERT INTO expenses (date, description, category, amount) VALUES (?, ?, ?, ?)')
+    .run(date || new Date().toISOString().slice(0, 10), String(description).trim(), (category || '').trim(), amt);
+  res.status(201).json({ id: r.lastInsertRowid });
+});
+
+app.delete('/api/expenses/:id', (req, res) => {
+  db.prepare('DELETE FROM expenses WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ── Schema info ──────────────────────────────────────────────────────────────
@@ -478,360 +508,6 @@ app.post('/api/telegram/test', async (req, res) => {
   else res.status(400).json({ ok: false, error: result.description || result.error || 'Failed' });
 });
 
-// ── Scanner Filters ───────────────────────────────────────────────────────────
-
-app.get('/api/scanner/filters', (req, res) => {
-  res.json(db.prepare('SELECT * FROM scanner_filters ORDER BY created_at DESC').all());
-});
-
-app.post('/api/scanner/filters', (req, res) => {
-  const { name, store_id, store_name, min_discount, category, interval_hours, notify_telegram } = req.body;
-  if (!name || !store_id) return res.status(400).json({ error: 'name and store_id required' });
-  const r = db.prepare(`
-    INSERT INTO scanner_filters (name, store_id, store_name, min_discount, category, interval_hours, notify_telegram)
-    VALUES (@name, @store_id, @store_name, @min_discount, @category, @interval_hours, @notify_telegram)
-  `).run({ name, store_id, store_name: store_name || '', min_discount: min_discount || 40, category: category || '', interval_hours: interval_hours || 0, notify_telegram: notify_telegram ?? 1 });
-  res.status(201).json({ id: r.lastInsertRowid });
-});
-
-app.put('/api/scanner/filters/:id', (req, res) => {
-  const { name, store_id, store_name, min_discount, category, interval_hours, notify_telegram, enabled } = req.body;
-  db.prepare(`
-    UPDATE scanner_filters SET
-      name=@name, store_id=@store_id, store_name=@store_name,
-      min_discount=@min_discount, category=@category,
-      interval_hours=@interval_hours, notify_telegram=@notify_telegram, enabled=@enabled
-    WHERE id=@id
-  `).run({ id: req.params.id, name, store_id, store_name: store_name || '', min_discount: min_discount || 40, category: category || '', interval_hours: interval_hours || 0, notify_telegram: notify_telegram ?? 1, enabled: enabled ?? 1 });
-  res.json({ ok: true });
-});
-
-app.delete('/api/scanner/filters/:id', (req, res) => {
-  db.prepare('DELETE FROM scanner_filters WHERE id=?').run(req.params.id);
-  res.json({ ok: true });
-});
-
-app.post('/api/scanner/filters/:id/run', async (req, res) => {
-  const filter = db.prepare('SELECT * FROM scanner_filters WHERE id=?').get(req.params.id);
-  if (!filter) return res.status(404).json({ error: 'Not found' });
-  const result = await runFilterScan(filter, true);
-  res.json(result);
-});
-
-// ── Lowe's Scraper (Puppeteer) ────────────────────────────────────────────────
-
-const puppeteerExtra = require('puppeteer-extra');
-const StealthPlugin  = require('puppeteer-extra-plugin-stealth');
-puppeteerExtra.use(StealthPlugin());
-
-const LOWES_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const CHROMIUM = process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser';
-
-let _browser        = null;
-let _lowesWarmedUp  = false;
-
-async function getBrowser() {
-  if (_browser) {
-    try { await _browser.pages(); return _browser; } catch { _browser = null; _lowesWarmedUp = false; }
-  }
-  _browser = await puppeteerExtra.launch({
-    executablePath: CHROMIUM,
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-blink-features=AutomationControlled',
-      '--window-size=1280,800',
-    ],
-    defaultViewport: { width: 1280, height: 800 },
-  });
-  return _browser;
-}
-
-// Visit Lowe's homepage first so Akamai sets trust cookies before hitting product pages
-async function warmUpLowes(browser, log = noop) {
-  if (_lowesWarmedUp) return;
-  log('Warming up session on lowes.com (Akamai trust cookies)…');
-  const page = await browser.newPage();
-  try {
-    await page.setUserAgent(LOWES_UA);
-    await page.goto('https://www.lowes.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    // Brief pause so Akamai fingerprinting scripts can run
-    await new Promise(r => setTimeout(r, 3000));
-    _lowesWarmedUp = true;
-    log('Session ready — Akamai cookies set', 'success');
-  } catch (e) {
-    log(`Warm-up warning: ${e.message}`, 'warn');
-  } finally {
-    await page.close().catch(() => {});
-  }
-}
-
-process.on('exit', () => { if (_browser) _browser.close().catch(() => {}); });
-
-const noop = () => {};
-
-function parseCookieString(str) {
-  return str.split(';')
-    .map(c => c.trim()).filter(Boolean)
-    .map(c => {
-      const idx = c.indexOf('=');
-      if (idx < 0) return null;
-      return { name: c.slice(0, idx).trim(), value: c.slice(idx + 1).trim(), domain: '.lowes.com', path: '/' };
-    })
-    .filter(Boolean);
-}
-
-async function scrapeLowesPage(url, storeId = '', log = noop) {
-  const browser = await getBrowser();
-  const savedCookies = getSetting('LOWES_COOKIES');
-
-  // Only warm up when no real session cookies are available
-  if (!savedCookies) {
-    await warmUpLowes(browser, log);
-  }
-
-  const page = await browser.newPage();
-  try {
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
-    await page.setUserAgent(LOWES_UA);
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Upgrade-Insecure-Requests': '1',
-    });
-
-    // Inject real browser cookies if available (bypasses Akamai _abck validation)
-    if (savedCookies) {
-      const cookies = parseCookieString(savedCookies);
-      if (cookies.length) {
-        await page.setCookie(...cookies);
-        log(`Injecting ${cookies.length} saved session cookies…`);
-      }
-    }
-
-    if (storeId) {
-      await page.setCookie({ name: 'sn', value: String(storeId), domain: '.lowes.com', path: '/' });
-    }
-
-    log(`Opening URL: ${url}`);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    log('Page loaded — waiting for product data…');
-
-    const found = await page.waitForFunction(
-      () => !!document.getElementById('__NEXT_DATA__'),
-      { timeout: 15000 }
-    ).then(() => true).catch(() => false);
-
-    const html    = await page.content();
-    const byteLen = html.length;
-
-    // Detect immediate Akamai block (tiny page, no __NEXT_DATA__)
-    if (!found && byteLen < 2000) {
-      const snippet = html.replace(/\s+/g, ' ').slice(0, 400);
-      log(`Blocked — ${byteLen} bytes. Preview: ${snippet}`, 'warn');
-      // Force re-warm on next attempt
-      _lowesWarmedUp = false;
-      throw new Error('AKAMAI_BLOCK');
-    }
-
-    log(`Page loaded — ${byteLen.toLocaleString()} bytes${found ? ', data found ✓' : ', no data'}`, found ? 'info' : 'warn');
-    if (!found) log(`Preview: ${html.replace(/\s+/g, ' ').slice(0, 400)}`, 'detail');
-    return html;
-  } finally {
-    await page.close().catch(() => {});
-  }
-}
-
-function extractNextData(html) {
-  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-  if (!m) throw new Error('NO_NEXT_DATA');
-  return JSON.parse(m[1]);
-}
-
-function dig(obj, ...paths) {
-  for (const path of paths) {
-    let cur = obj;
-    for (const key of path.split('.')) {
-      if (cur == null) break;
-      cur = cur[key];
-    }
-    if (cur != null) return cur;
-  }
-  return null;
-}
-
-function parseProducts(nextData, minDiscount, log = noop) {
-  const products = dig(nextData,
-    'props.pageProps.data.productResults.products',
-    'props.pageProps.productResults.products',
-    'props.pageProps.data.products',
-    'props.pageProps.initialData.products',
-    'props.pageProps.products'
-  );
-  if (!Array.isArray(products)) {
-    const keys = Object.keys(nextData?.props?.pageProps || {});
-    log(`No products array in page data. pageProps keys: [${keys.join(', ')}]`, 'warn');
-    return { products: [], total: 0, raw_keys: keys };
-  }
-
-  log(`Parsing ${products.length} raw products from page…`);
-  const out = products
-    .map(p => {
-      const now  = p.currentPrice ?? p.salePrice ?? p.price ?? p.pricing?.salePrice ?? p.pricing?.currentPrice;
-      const was  = p.regularPrice ?? p.wasPrice   ?? p.pricing?.regularPrice ?? p.pricing?.wasPrice;
-      const pct  = (was && now && was > now) ? Math.round((was - now) / was * 100) : (p.discount ?? p.pctDiscount ?? 0);
-      return {
-        id:           p.itemId ?? p.omniItemId ?? p.sku ?? p.productId,
-        name:         p.description ?? p.title ?? p.name,
-        image:        p.imageUrl ?? p.image ?? p.thumbnail ?? p.images?.[0],
-        now_price:    now,
-        was_price:    was,
-        discount_pct: pct,
-        model:        p.modelNumber ?? p.model ?? p.modelId,
-        category:     Array.isArray(p.categoryHierarchy) ? p.categoryHierarchy.join(' > ') : (p.category ?? null),
-        url:          p.pdUrl ? `https://www.lowes.com${p.pdUrl}` : (p.url ?? null),
-        store_avail:  p.storePickupAvailability ?? p.availability?.storePickup ?? null,
-      };
-    })
-    .filter(p => p.name && p.discount_pct >= minDiscount)
-    .sort((a, b) => b.discount_pct - a.discount_pct);
-
-  log(`${out.length} of ${products.length} items match ${minDiscount}%+ discount`, out.length > 0 ? 'success' : 'warn');
-  return { products: out, total: products.length };
-}
-
-// Store search — use Puppeteer to bypass bot detection
-app.get('/api/lowes/stores', async (req, res) => {
-  const { zip } = req.query;
-  if (!zip) return res.status(400).json({ error: 'zip required' });
-  try {
-    const html = await scrapeLowesPage(`https://www.lowes.com/store/search?searchString=${encodeURIComponent(zip)}`);
-    const nextData = extractNextData(html);
-    const raw = dig(nextData,
-      'props.pageProps.stores',
-      'props.pageProps.data.stores',
-      'props.pageProps.initialData.stores'
-    ) || [];
-    if (!Array.isArray(raw) || !raw.length) {
-      return res.status(502).json({ error: 'STORE_SEARCH_FAILED', message: 'No stores found. Enter your store number manually (find it on lowes.com → Store Details URL).' });
-    }
-    const stores = raw.map(s => ({
-      id:       String(s.storeId ?? s.id ?? ''),
-      name:     s.storeName ?? s.name ?? '',
-      address:  s.address?.address1 ?? s.streetAddress ?? '',
-      city:     s.address?.city ?? s.city ?? '',
-      state:    s.address?.state ?? s.state ?? '',
-      zip:      s.address?.zipCode ?? s.postalCode ?? '',
-      distance: s.distance ?? null,
-    })).filter(s => s.id);
-    res.json({ stores });
-  } catch (err) {
-    res.status(500).json({ error: err.message, message: 'Store search failed. Enter your store number manually.' });
-  }
-});
-
-// Core deals scan — log callback receives (msg, level) in real time
-async function runLowesCleared(storeId, minDiscount, category, page, log = noop) {
-  const offset = (page - 1) * 48;
-  // Lowe's renamed "Clearance" to "Deals" — updated URL from live site
-  const base = `https://www.lowes.com/pl/Deals/1611079983848?catalog=4294936478&storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}`;
-  const urls = [
-    base,
-    `https://www.lowes.com/pl/Deals/1611079983848?catalog=4294936478&storeId=${encodeURIComponent(storeId)}&Nrpp=48&Nao=${offset}&sortMethod=ageSort`,
-  ];
-
-  log(`Starting scan — store #${storeId}, min discount ${minDiscount}%, page ${page}`);
-  log(`Will try ${urls.length} URL patterns`);
-
-  let lastErr = null;
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i];
-    log(`[${i + 1}/${urls.length}] Trying: ${url.replace(/\?.*/, '')}…`);
-    try {
-      const html     = await scrapeLowesPage(url, storeId, log);
-      log('Extracting product data from page…');
-      const nextData = extractNextData(html);
-      const result   = parseProducts(nextData, minDiscount, log);
-      return result;
-    } catch (err) {
-      const detail = err.message === 'AKAMAI_BLOCK'
-        ? 'Akamai bot check blocked the request — re-warming session for next attempt'
-        : err.message === 'NO_NEXT_DATA'
-        ? 'Page loaded but no product data found (site layout may have changed)'
-        : err.message;
-      log(`URL ${i + 1} failed: ${detail}`, 'warn');
-      lastErr = err;
-      if (i < urls.length - 1) log('Trying next URL pattern…');
-    }
-  }
-
-  log(`All ${urls.length} URL patterns failed`, 'error');
-  throw lastErr;
-}
-
-// Streaming SSE endpoint — used by the UI for live console output
-app.get('/api/lowes/clearance-stream', async (req, res) => {
-  const { storeId, minDiscount = 30, page = 1, category = '' } = req.query;
-  if (!storeId) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ error: 'storeId required' }));
-  }
-
-  res.writeHead(200, {
-    'Content-Type':  'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection':    'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-
-  const send = (event, data) => {
-    try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
-  };
-  const log = (msg, level = 'info') => {
-    send('log', { msg, level, ts: new Date().toLocaleTimeString() });
-    console.log(`[scan] ${msg}`);
-  };
-
-  try {
-    log('Launching headless browser…');
-    const result = await runLowesCleared(storeId, parseFloat(minDiscount), category, parseInt(page), log);
-    send('result', { ...result, page: parseInt(page), store_id: storeId });
-  } catch (err) {
-    const detail = err.message === 'AKAMAI_BLOCK'
-      ? 'Lowe\'s (Akamai) blocked the headless browser. Session will re-warm automatically — try scanning again in a few seconds.'
-      : err.message === 'NO_NEXT_DATA'
-      ? 'Page loaded but no product data found. The Lowe\'s page structure may have changed.'
-      : err.message;
-    log(`Scan failed: ${detail}`, 'error');
-    send('error', { message: detail, raw: err.message });
-  } finally {
-    res.end();
-  }
-});
-
-// Non-streaming endpoint — kept for the scheduler (no SSE needed)
-app.get('/api/lowes/clearance', async (req, res) => {
-  const { storeId, minDiscount = 30, page = 1, category = '' } = req.query;
-  if (!storeId) return res.status(400).json({ error: 'storeId required' });
-  try {
-    const result = await runLowesCleared(storeId, parseFloat(minDiscount), category, parseInt(page));
-    res.json({ ...result, page: parseInt(page), store_id: storeId });
-  } catch (err) {
-    const isNoData = err.message === 'NO_NEXT_DATA';
-    res.status(500).json({
-      error: err.message,
-      message: isNoData
-        ? 'Lowe\'s page loaded but no product data found. Check server logs.'
-        : err.message,
-    });
-  }
-});
-
 // Filter a pre-extracted product array from the "Grab Lowe's Deals" bookmarklet.
 // Lowe's renders the deals grid in web components, so the bookmarklet builds the
 // product list from JSON-LD (name/sku/price/image/url — always present) and
@@ -884,10 +560,11 @@ app.post('/api/lowes/import', (req, res) => {
     const maxP = (maxPrice != null && maxPrice !== '' && !isNaN(maxPrice)) ? Number(maxPrice) : null;
     // Grabber bookmarklet format: { source:'<retailer>-domgrab', retailer, products:[...] }
     const isGrab = obj && typeof obj.source === 'string' && obj.source.endsWith('-domgrab') && Array.isArray(obj.products);
-    const retailer = isGrab ? (obj.retailer || obj.source.replace(/-domgrab$/, '')) : 'lowes';
-    const result = isGrab
-      ? filterGrabbedProducts(obj.products, maxP)
-      : parseProducts(obj, parseFloat(minDiscount)); // legacy __NEXT_DATA__ fallback
+    if (!isGrab) {
+      return res.status(400).json({ error: 'BAD_FORMAT', message: 'Use the current "Grab Deals" bookmarklet on a deals page — it produces the expected format.' });
+    }
+    const retailer = obj.retailer || obj.source.replace(/-domgrab$/, '');
+    const result = filterGrabbedProducts(obj.products, maxP);
     if (!result.products?.length && !result.total) {
       return res.json({ ...result, retailer, imported: true, message: 'No deals found in the pasted data. Make sure the page finished loading (scroll down once) before clicking the bookmarklet.' });
     }
@@ -897,261 +574,6 @@ app.post('/api/lowes/import', (req, res) => {
   }
 });
 
-// Parse cookies from either a Cookie-Editor JSON export (array of {name,value,domain,…})
-// or a plain "name=value; name2=value2" string. Returns Puppeteer setCookie objects.
-function parseCookiesFlexible(str, defaultDomain) {
-  str = (str || '').trim();
-  if (!str) return [];
-  if (str[0] === '[' || str[0] === '{') {
-    try {
-      const parsed = JSON.parse(str);
-      const list = Array.isArray(parsed) ? parsed : (parsed.cookies || []);
-      return list
-        .filter(c => c && c.name)
-        .map(c => ({
-          name:     c.name,
-          value:    String(c.value == null ? '' : c.value),
-          domain:   c.domain || defaultDomain,
-          path:     c.path || '/',
-          httpOnly: !!c.httpOnly,
-          secure:   c.secure !== false,
-        }));
-    } catch { /* fall through to string parsing */ }
-  }
-  return str.split(';').map(c => c.trim()).filter(Boolean).map(c => {
-    const i = c.indexOf('=');
-    if (i < 0) return null;
-    return { name: c.slice(0, i).trim(), value: c.slice(i + 1).trim(), domain: defaultDomain, path: '/' };
-  }).filter(Boolean);
-}
-
-// Test whether the SERVER (real-Chrome Puppeteer) can reach Home Depot with the user's
-// cookies. This is the gate for free scheduled scanning: if HD serves products to the
-// server, we can automate it; if Akamai blocks, we know to go paid/manual.
-app.post('/api/hd/test-access', async (req, res) => {
-  const cookieStr = (req.body && req.body.cookies) || getSetting('HD_COOKIES') || '';
-  const url = (req.body && req.body.url) || 'https://www.homedepot.com/b/Special-Values/N-5yc1vZ7';
-  const cookies = parseCookiesFlexible(cookieStr, '.homedepot.com');
-  if (!cookies.length) {
-    return res.status(400).json({ ok: false, error: 'NO_COOKIES', message: 'Paste your Home Depot cookies first (Cookie-Editor → Export → JSON).' });
-  }
-  // Persist for the eventual scheduler
-  if (req.body && req.body.cookies) setSetting('HD_COOKIES', cookieStr);
-
-  // Optional: a searchModel request captured verbatim from the user's browser
-  // ({url, headers, body}). When present we replay it server-side — the exact call
-  // the scheduler would make — instead of rendering the (hard-gated) listing page.
-  let apiReq = (req.body && req.body.apiRequest) || null;
-  if (typeof apiReq === 'string') { try { apiReq = JSON.parse(apiReq); } catch (e) { apiReq = null; } }
-  const hasApiReq = apiReq && apiReq.url && apiReq.body;
-
-  let page;
-  try {
-    const browser = await getBrowser();
-    page = await browser.newPage();
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    });
-    await page.setUserAgent(LOWES_UA);
-    const setAllCookies = async () => {
-      for (const c of cookies) { try { await page.setCookie(c); } catch { /* skip bad cookie */ } }
-    };
-    await setAllCookies();
-
-    // 1) Warm up on the homepage so we have a real homedepot.com origin to fetch from.
-    let homeStatus = 0;
-    try {
-      const r = await page.goto('https://www.homedepot.com/', { waitUntil: 'domcontentloaded', timeout: 45000 });
-      homeStatus = r ? r.status() : 0;
-    } catch (e) { /* keep going, capture below */ }
-    await new Promise(r => setTimeout(r, 3000));
-
-    // 2a) Deciding sweep: replay the captured request to the captured (apionline) URL,
-    // trying 3 header variants in one shot so we can exclude "wrong shape" definitively.
-    if (hasApiReq) {
-      // Re-inject cookies — the homepage's sensor JS may have rotated _abck; this
-      // restores the user's validated cookie right before the call (also mirrors how
-      // the real scheduler would re-set daily cookies before each batch).
-      await setAllCookies();
-
-      // Headers the browser forbids fetch() from setting; coerce booleans to strings.
-      const FORBIDDEN = ['host', 'cookie', 'content-length', 'connection', 'user-agent', 'referer', 'origin', 'accept-encoding'];
-      const sanitize = (h) => {
-        const o = {};
-        Object.keys(h || {}).forEach(k => {
-          if (!FORBIDDEN.includes(k.toLowerCase())) o[k] = (typeof h[k] === 'boolean') ? String(h[k]) : h[k];
-        });
-        if (!Object.keys(o).some(k => k.toLowerCase() === 'content-type')) o['content-type'] = 'application/json';
-        return o;
-      };
-      const baseH = sanitize(apiReq.headers);
-      const noTrace = {};
-      Object.keys(baseH).forEach(k => {
-        if (!['x-parent-trace-id', 'x-cloud-trace-context'].includes(k.toLowerCase())) noTrace[k] = baseH[k];
-      });
-      const minimal = {};
-      Object.keys(baseH).forEach(k => {
-        if (['x-experience-name', 'x-hd-dc', 'x-current-url', 'content-type', 'accept'].includes(k.toLowerCase())) minimal[k] = baseH[k];
-      });
-      if (!Object.keys(minimal).some(k => k.toLowerCase() === 'accept')) minimal['accept'] = '*/*';
-      const variantList = [
-        { name: 'as-captured', headers: baseH },
-        { name: 'no-trace-ids', headers: noTrace },
-        { name: 'minimal', headers: minimal },
-      ];
-
-      const out = await page.evaluate(async (u, b, variants) => {
-        const results = [];
-        for (const v of variants) {
-          try {
-            const r = await fetch(u, { method: 'POST', headers: v.headers, body: b, credentials: 'include' });
-            const text = await r.text();
-            let count = null;
-            try {
-              const j = JSON.parse(text);
-              const p = (((j || {}).data || {}).searchModel || {}).products;
-              if (Array.isArray(p)) count = p.length;
-            } catch (e) {}
-            results.push({ name: v.name, status: r.status, count, snippet: text.slice(0, 200) });
-          } catch (e) { results.push({ name: v.name, status: 0, count: null, snippet: 'fetch error: ' + String(e) }); }
-        }
-        let ip = '';
-        try { const ir = await fetch('https://api.ipify.org?format=json'); ip = (await ir.json()).ip; } catch (e) {}
-        return { results, ip };
-      }, apiReq.url, apiReq.body, variantList);
-
-      const winner = out.results.find(r => r.status === 200 && r.count > 0);
-      const ok = !!winner;
-      res.json({
-        ok,
-        blocked: !ok,
-        mode: 'api-sweep',
-        variants: out.results,
-        egressIp: out.ip,
-        homeStatus,
-        cookieCount: cookies.length,
-        message: ok
-          ? `Success — header variant "${winner.name}" pulled ${winner.count} products straight from Home Depot's API. Scheduled HD scanning is viable! 🎉`
-          : `Server-side API blocked — all 3 header variants failed (statuses: ${out.results.map(r => r.name + '=' + (r.status || 'err')).join(', ')}; homepage was HTTP ${homeStatus || 'n/a'}). This is the definitive server-side result.`,
-      });
-      return;
-    }
-
-    // 2b) Fallback (no captured request): render the listing page and watch its own API call.
-    let smProducts = null;
-    let smStatus = null;
-    page.on('response', async (resp) => {
-      try {
-        if (/opname=searchModel/i.test(resp.url())) {
-          smStatus = resp.status();
-          const j = await resp.json();
-          const n = (((j || {}).data || {}).searchModel || {}).products;
-          if (Array.isArray(n)) smProducts = n.length;
-        }
-      } catch (e) { /* body not JSON / already consumed */ }
-    });
-
-    let plpStatus = 0;
-    try {
-      const r = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-      plpStatus = r ? r.status() : 0;
-    } catch (e) { /* keep going, capture below */ }
-
-    const deadline = Date.now() + 25000;
-    while (Date.now() < deadline && !(smProducts > 0)) {
-      await new Promise(r => setTimeout(r, 1000));
-    }
-
-    const info = await page.evaluate(() => {
-      const pods = document.querySelectorAll('[data-testid="product-pod"]').length;
-      let prods = 0;
-      try {
-        const st = window.__APOLLO_STATE__ || {};
-        prods = Object.keys(st).filter(k => st[k] && st[k].__typename === 'BaseProduct').length;
-      } catch (e) {}
-      const txt = (document.body.innerText || '');
-      const denied = /Access Denied|don't have permission|Pardon Our Interruption|unusual activity|are you a human|verify you are a human/i.test(txt);
-      return { pods, prods, denied, title: document.title, preview: txt.slice(0, 400) };
-    });
-
-    const ok = (smProducts > 0) || info.pods > 0 || info.prods > 0;
-    const gotCount = smProducts != null ? smProducts : (info.pods || info.prods);
-    res.json({
-      ok,
-      blocked: !ok,
-      mode: 'page',
-      searchModelProducts: smProducts,
-      searchModelStatus: smStatus,
-      pods: info.pods,
-      apolloProducts: info.prods,
-      homeStatus,
-      plpStatus,
-      title: info.title,
-      denied: info.denied,
-      preview: info.preview,
-      cookieCount: cookies.length,
-      message: ok
-        ? `Success — the server pulled ${gotCount} products using your cookies. Scheduled HD scanning is viable! 🎉`
-        : `Blocked at the listing page (HTTP ${plpStatus || 'n/a'}; homepage was HTTP ${homeStatus || 'n/a'}). For a definitive test, capture the API request with the bookmarklet above and paste it here.`,
-    });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message, message: 'Test failed: ' + err.message });
-  } finally {
-    if (page) await page.close().catch(() => {});
-  }
-});
-
-// Get saved Lowe's store settings
-app.get('/api/lowes/settings', (req, res) => {
-  res.json({
-    storeId:   getSetting('LOWES_STORE_ID')   || '',
-    storeName: getSetting('LOWES_STORE_NAME') || '',
-  });
-});
-
-// ── Filter Runner + Scheduler ─────────────────────────────────────────────────
-
-async function runFilterScan(filter, sendAlert = false) {
-  try {
-    const result = await runLowesCleared(filter.store_id, filter.min_discount, filter.category || '', 1);
-    const count  = result.products?.length || 0;
-
-    db.prepare(`UPDATE scanner_filters SET last_run=CURRENT_TIMESTAMP, last_count=? WHERE id=?`)
-      .run(count, filter.id);
-
-    if (sendAlert && count > 0 && filter.notify_telegram) {
-      const top = (result.products || []).slice(0, 5)
-        .map(p => `• ${p.name} — <b>${p.discount_pct}% OFF</b> → ${p.now_price ? '$' + p.now_price.toFixed(2) : '?'} (was ${p.was_price ? '$' + p.was_price.toFixed(2) : '?'})`)
-        .join('\n');
-      const msg = `🏪 <b>Lowe's Clearance Alert</b>\nFilter: ${filter.name}\nStore: ${filter.store_name || filter.store_id}\nFound <b>${count}</b> items at ${filter.min_discount}%+ off\n\n${top}\n\nOpen Resell Tracker to add items to your inventory.`;
-      await sendTelegram(msg);
-    }
-
-    return { ok: true, count, products: result.products };
-  } catch (err) {
-    console.error(`Filter scan failed [${filter.name}]:`, err.message);
-    return { ok: false, error: err.message };
-  }
-}
-
-async function runScheduledScans() {
-  const now     = Date.now();
-  const filters = db.prepare("SELECT * FROM scanner_filters WHERE enabled=1 AND interval_hours > 0").all();
-  for (const f of filters) {
-    const lastRun    = f.last_run ? new Date(f.last_run).getTime() : 0;
-    const hoursSince = (now - lastRun) / 3600000;
-    if (hoursSince >= f.interval_hours) {
-      console.log(`Running scheduled scan: ${f.name}`);
-      await runFilterScan(f, true);
-    }
-  }
-}
-
-// Start scheduler — first check 2 minutes after boot, then every 15 minutes
-setTimeout(() => {
-  runScheduledScans();
-  setInterval(runScheduledScans, 15 * 60 * 1000);
-}, 2 * 60 * 1000);
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Resell Tracker v${VERSION} running on port ${PORT}`);
