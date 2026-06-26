@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.2.19';
+const VERSION = '1.2.20';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -966,35 +966,45 @@ app.post('/api/hd/test-access', async (req, res) => {
     } catch (e) { /* keep going, capture below */ }
     await new Promise(r => setTimeout(r, 3000));
 
-    // 2a) Preferred path: replay the captured API request directly from page context.
+    // 2a) Deciding sweep: replay the captured request to the captured (apionline) URL,
+    // trying 3 header variants in one shot so we can exclude "wrong shape" definitively.
     if (hasApiReq) {
       // Re-inject cookies — the homepage's sensor JS may have rotated _abck; this
       // restores the user's validated cookie right before the call (also mirrors how
       // the real scheduler would re-set daily cookies before each batch).
       await setAllCookies();
 
-      // Strip headers the browser forbids fetch() from setting (it would ignore or throw).
+      // Headers the browser forbids fetch() from setting; coerce booleans to strings.
       const FORBIDDEN = ['host', 'cookie', 'content-length', 'connection', 'user-agent', 'referer', 'origin', 'accept-encoding'];
-      const headers = {};
-      Object.keys(apiReq.headers || {}).forEach(k => {
-        if (!FORBIDDEN.includes(k.toLowerCase())) headers[k] = apiReq.headers[k];
+      const sanitize = (h) => {
+        const o = {};
+        Object.keys(h || {}).forEach(k => {
+          if (!FORBIDDEN.includes(k.toLowerCase())) o[k] = (typeof h[k] === 'boolean') ? String(h[k]) : h[k];
+        });
+        if (!Object.keys(o).some(k => k.toLowerCase() === 'content-type')) o['content-type'] = 'application/json';
+        return o;
+      };
+      const baseH = sanitize(apiReq.headers);
+      const noTrace = {};
+      Object.keys(baseH).forEach(k => {
+        if (!['x-parent-trace-id', 'x-cloud-trace-context'].includes(k.toLowerCase())) noTrace[k] = baseH[k];
       });
-      if (!Object.keys(headers).some(k => k.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
+      const minimal = {};
+      Object.keys(baseH).forEach(k => {
+        if (['x-experience-name', 'x-hd-dc', 'x-current-url', 'content-type', 'accept'].includes(k.toLowerCase())) minimal[k] = baseH[k];
+      });
+      if (!Object.keys(minimal).some(k => k.toLowerCase() === 'accept')) minimal['accept'] = '*/*';
+      const variantList = [
+        { name: 'as-captured', headers: baseH },
+        { name: 'no-trace-ids', headers: noTrace },
+        { name: 'minimal', headers: minimal },
+      ];
 
-      // Prefer a same-origin call (www.homedepot.com) to avoid CORS confounds; fall
-      // back to the captured URL (e.g. apionline.homedepot.com) if that doesn't work.
-      const urls = [];
-      try {
-        const u0 = new URL(apiReq.url);
-        urls.push('https://www.homedepot.com' + u0.pathname + u0.search);
-      } catch (e) {}
-      if (!urls.includes(apiReq.url)) urls.push(apiReq.url);
-
-      const out = await page.evaluate(async (urlList, h, b) => {
-        let last = { status: 0, count: null, snippet: 'no attempt' };
-        for (const u of urlList) {
+      const out = await page.evaluate(async (u, b, variants) => {
+        const results = [];
+        for (const v of variants) {
           try {
-            const r = await fetch(u, { method: 'POST', headers: h, body: b, credentials: 'include' });
+            const r = await fetch(u, { method: 'POST', headers: v.headers, body: b, credentials: 'include' });
             const text = await r.text();
             let count = null;
             try {
@@ -1002,29 +1012,27 @@ app.post('/api/hd/test-access', async (req, res) => {
               const p = (((j || {}).data || {}).searchModel || {}).products;
               if (Array.isArray(p)) count = p.length;
             } catch (e) {}
-            last = { status: r.status, count, snippet: text.slice(0, 300), url: u };
-            if (r.status === 200 && count > 0) return last;
-          } catch (e) { last = { status: 0, count: null, snippet: 'fetch error: ' + String(e), url: u }; }
+            results.push({ name: v.name, status: r.status, count, snippet: text.slice(0, 200) });
+          } catch (e) { results.push({ name: v.name, status: 0, count: null, snippet: 'fetch error: ' + String(e) }); }
         }
-        return last;
-      }, urls, headers, apiReq.body);
+        let ip = '';
+        try { const ir = await fetch('https://api.ipify.org?format=json'); ip = (await ir.json()).ip; } catch (e) {}
+        return { results, ip };
+      }, apiReq.url, apiReq.body, variantList);
 
-      const ok = out.status === 200 && out.count > 0;
-      const emptyButOk = out.status === 200 && !(out.count > 0);
+      const winner = out.results.find(r => r.status === 200 && r.count > 0);
+      const ok = !!winner;
       res.json({
         ok,
         blocked: !ok,
-        mode: 'api',
-        apiStatus: out.status,
-        apiProducts: out.count,
+        mode: 'api-sweep',
+        variants: out.results,
+        egressIp: out.ip,
         homeStatus,
-        snippet: out.snippet,
         cookieCount: cookies.length,
         message: ok
-          ? `Success — the server pulled ${out.count} products straight from Home Depot's API using your cookies. Scheduled HD scanning is viable! 🎉`
-          : emptyButOk
-            ? `API reachable (HTTP 200) but returned no products — likely a query/header shape issue, NOT an Akamai block. This is fixable.`
-            : `Blocked — the API call returned HTTP ${out.status || 'error'} (homepage was HTTP ${homeStatus || 'n/a'}). ${out.status === 403 ? 'Akamai blocked the API server-side.' : 'See details below.'}`,
+          ? `Success — header variant "${winner.name}" pulled ${winner.count} products straight from Home Depot's API. Scheduled HD scanning is viable! 🎉`
+          : `Server-side API blocked — all 3 header variants failed (statuses: ${out.results.map(r => r.name + '=' + (r.status || 'err')).join(', ')}; homepage was HTTP ${homeStatus || 'n/a'}). This is the definitive server-side result.`,
       });
       return;
     }

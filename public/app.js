@@ -776,15 +776,25 @@ async function testHdAccess() {
   try {
     const r = await api('/api/hd/test-access', 'POST', { cookies, apiRequest: apiRequest || undefined });
     btn.disabled = false;
-    const diag = `<div style="margin-top:4px;font-size:0.72em;color:var(--text-dim)">`
+    let diag = `<div style="margin-top:4px;font-size:0.72em;color:var(--text-dim)">`
       + `cookies: ${r.cookieCount ?? '?'} · homepage HTTP ${r.homeStatus ?? '?'}`
-      + (r.mode === 'api'
-          ? ` · API HTTP ${r.apiStatus ?? '?'}` + (r.apiProducts != null ? ` · products ${r.apiProducts}` : '')
-          : (r.searchModelStatus != null ? ` · searchModel HTTP ${r.searchModelStatus}` : '')
-            + (r.plpStatus ? ` · PLP HTTP ${r.plpStatus}` : '')
-            + (r.title ? ` · page: "${esc(r.title)}"` : ''))
-      + `</div>`
-      + (r.snippet ? `<div style="margin-top:4px;font-size:0.68em;color:var(--text-dim);white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;border:1px solid var(--border);padding:4px;border-radius:4px">${esc(r.snippet)}</div>` : '');
+      + (r.egressIp ? ` · server IP ${esc(r.egressIp)}` : '')
+      + `</div>`;
+    if (r.mode === 'api-sweep' && Array.isArray(r.variants)) {
+      diag += r.variants.map(v =>
+        `<div style="margin-top:4px;font-size:0.68em;color:var(--text-dim)">`
+        + `<b>${esc(v.name)}</b>: HTTP ${v.status ?? '?'}${v.count != null ? ` · products ${v.count}` : ''}`
+        + `<div style="white-space:pre-wrap;word-break:break-all;max-height:60px;overflow:auto;border:1px solid var(--border);padding:3px;border-radius:4px;margin-top:2px">${esc(v.snippet || '')}</div>`
+        + `</div>`).join('');
+    } else {
+      diag += (r.searchModelStatus != null || r.plpStatus || r.title)
+        ? `<div style="margin-top:4px;font-size:0.72em;color:var(--text-dim)">`
+          + (r.searchModelStatus != null ? `searchModel HTTP ${r.searchModelStatus}` : '')
+          + (r.plpStatus ? ` · PLP HTTP ${r.plpStatus}` : '')
+          + (r.title ? ` · page: "${esc(r.title)}"` : '') + `</div>`
+        : '';
+      if (r.snippet) diag += `<div style="margin-top:4px;font-size:0.68em;color:var(--text-dim);white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;border:1px solid var(--border);padding:4px;border-radius:4px">${esc(r.snippet)}</div>`;
+    }
     resEl.innerHTML = (r.ok
       ? `<span class="key-ok">&#10003; ${esc(r.message)}</span>`
       : `<span class="key-missing">&#10007; ${esc(r.message || r.error || 'Blocked')}</span>`) + diag;
