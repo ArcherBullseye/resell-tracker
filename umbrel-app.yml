@@ -5,7 +5,7 @@ name: Resell Tracker
 tagline: Track retail arbitrage buys, sells, and profits
 icon: https://raw.githubusercontent.com/ArcherBullseye/resell-tracker/main/umbrel-app-icon.jpg
 category: Finance
-version: "1.3.1"
+version: "1.3.2"
 port: 3000
 description: >-
   Resell Tracker is a retail arbitrage management app that runs entirely on your Umbrel home server.
@@ -47,4 +47,4 @@ support: https://github.com/ArcherBullseye/resell-tracker/issues
 dependencies: []
 gallery: []
 releaseNotes: >-
-  v1.2.20: Deciding Home Depot server-access test — replays your captured API request with 3 header variants in one shot and reports each result plus the server's egress IP, to definitively tell a request-shape issue from an Akamai block. Also adds CI image-layer caching so future updates download only the small code layer instead of the full image.
+  v1.3.2: Browser extension for free retailer scanning (Lowe's, TSC, HD, Walmart) — 1-click scan from clearance pages, products sent directly to your Resell Tracker over LAN with no cloud required. TSC Apify integration wired (store number field, keyword scan). Shelf badge now hidden on sold items (still editable in the Edit modal). Server-side import buffer with pending-import polling so products auto-appear when you return to the scanner tab.

@@ -94,7 +94,7 @@
           <span class="scanner-modal-icon">&#127968;</span>
           <div>
             <div class="scanner-modal-name">Deals Scanner</div>
-            <div class="scanner-modal-sub">Grab deals from your browser, then compare to eBay sold prices</div>
+            <div class="scanner-modal-sub">Cloud-scrape clearance deals and compare to eBay sold prices</div>
           </div>
         </div>
         <button class="btn-close" onclick="closeScanner()">&#10005;</button>
@@ -103,43 +103,73 @@
       <!-- Body: sidebar + results -->
       <div class="scanner-modal-body">
 
-        <!-- Left sidebar: import from browser -->
+        <!-- Left sidebar: Apify scanner -->
         <div class="scanner-sidebar">
 
-          <!-- Import from browser (uses your real session — bypasses bot blocks) -->
-          <div class="scanner-section scanner-import-section">
-            <div class="scanner-section-title">&#128203; Import from Browser</div>
-            <div class="rtabs">
-              <button type="button" class="rtab active" id="rtab-lowes" onclick="switchImportRetailer('lowes')">&#128998; Lowe's</button>
-              <button type="button" class="rtab" id="rtab-homedepot" onclick="switchImportRetailer('homedepot')">&#129001; Home Depot</button>
-            </div>
-            <div id="import-panel-lowes">
+          <div class="scanner-section">
+            <div class="scanner-section-title">&#128640; Apify Scanner</div>
             <p class="scanner-import-help">
-              Lowe's blocks automated scans, so grab deals from your own browser:<br>
-              <strong>1.</strong> Drag this button to your browser's bookmark bar (one-time):<br>
-              <a id="lowes-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('lowes.com')){alert('Open a Lowe\'s deals/listing page first, then click this.');return;}var step=24;var m=location.href.match(/[?&]Nrpp=(\d+)/);if(m)step=parseInt(m[1]);var base=location.href;if(/[?&]Nao=\d+/.test(base))base=base.replace(/([?&])Nao=\d+/,'$1Nao={N}');else base=base+(base.indexOf('?')>=0?'&':'?')+'Nao={N}';function parseDoc(doc){var out=[];doc.querySelectorAll('script[type=&quot;application/ld+json&quot;]').forEach(function(s){try{var j=JSON.parse(s.textContent);var arr=Array.isArray(j)?j:(j['@graph']?j['@graph']:[j]);arr.forEach(function(p){if(p&&p['@type']==='Product'){var off=Array.isArray(p.offers)?p.offers[0]:p.offers;out.push({sku:String(p.sku||''),name:p.name||'',brand:(p.brand&&p.brand.name)||'',image:(typeof p.image==='string'?p.image:(Array.isArray(p.image)?p.image[0]:'')),url:(off&&off.url)||'',now_price:off&&off.price!=null?Number(off.price):null,was_price:null,discount_pct:null});}});}catch(e){}});return out;}var all=[],seen={},maxPages=20;var bar=document.createElement('div');bar.style.cssText='position:fixed;top:10px;right:10px;z-index:2147483647;background:#012169;color:#fff;font:14px sans-serif;padding:10px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4)';bar.textContent='Grabbing deals…';document.body.appendChild(bar);function fin(){bar.remove();if(!all.length){alert('No deals found. Make sure you are on a Lowe\'s deals/listing page.');return;}var json=JSON.stringify({source:'lowes-domgrab',retailer:'lowes',products:all});navigator.clipboard.writeText(json).then(function(){alert('✓ Grabbed '+all.length+' deals across multiple pages!\n\nPaste into Resell Tracker → Scanner → Import.');}).catch(function(){var w=window.open('','_blank');w.document.body.innerHTML='<p>Copy failed - select all and copy:</p>';var ta=w.document.createElement('textarea');ta.style.cssText='width:100%;height:80vh';ta.value=json;w.document.body.appendChild(ta);ta.select();});}function go(i){if(i>=maxPages)return fin();var url=base.replace('{N}',i*step);fetch(url,{credentials:'include'}).then(function(r){return r.text();}).then(function(html){if(html.length<1500||/Access Denied/i.test(html))return fin();var doc=new DOMParser().parseFromString(html,'text/html');var prods=parseDoc(doc);var added=0;prods.forEach(function(p){if(p.sku&&!seen[p.sku]){seen[p.sku]=1;all.push(p);added++;}});bar.textContent='Grabbing… '+all.length+' deals (page '+(i+1)+')';if(added===0)return fin();setTimeout(function(){go(i+1);},450);}).catch(function(){fin();});}go(0);})();" draggable="true">&#128203; Grab Lowe's Deals</a><br>
-              <strong>2.</strong> On <strong>lowes.com</strong>, open a Deals listing for your store, then click the bookmarklet. It pages through the whole category automatically (watch the counter, top-right) and copies everything in one go.<br>
-              <strong>3.</strong> Paste below and Import.
+              Cloud scraper that bypasses bot detection. Requires an <strong>Apify API Token</strong> —
+              add it in <span class="inline-link" onclick="closeScanner(); openSettings('apify')">Settings &#8594; Apify</span>.
             </p>
+
+            <label class="scanner-field-label" style="margin-top:10px">Retailer</label>
+            <div class="rtabs" id="apify-retailer-tabs" style="flex-wrap:wrap;gap:4px;margin-bottom:10px">
+              <button type="button" class="rtab active" data-retailer="lowes" onclick="selectApifyRetailer('lowes')">&#128998; Lowe's</button>
+              <button type="button" class="rtab" data-retailer="tractorsupply" onclick="selectApifyRetailer('tractorsupply')">&#127807; TSC</button>
+              <button type="button" class="rtab" disabled style="opacity:0.35;cursor:default" title="Coming soon">&#129001; HD</button>
+              <button type="button" class="rtab" disabled style="opacity:0.35;cursor:default" title="Coming soon">&#128722; Walmart</button>
+              <button type="button" class="rtab" disabled style="opacity:0.35;cursor:default" title="Coming soon">&#128462; Costco</button>
             </div>
-            <div id="import-panel-homedepot" style="display:none">
-            <p class="scanner-import-help">
-              Home Depot has a real product API — this grabs the whole clearance feed with <strong>exact discounts</strong>:<br>
-              <strong>1.</strong> Drag this to your bookmark bar (one-time):<br>
-              <a id="hd-bookmarklet" class="bookmarklet-link" href="javascript:(function(){if(!location.hostname.includes('homedepot.com')){alert('Open a Home Depot listing page first.');return;}var bar=document.createElement('div');bar.style.cssText='position:fixed;top:10px;right:10px;z-index:2147483647;background:#f96302;color:#fff;font:14px sans-serif;padding:10px 14px;border-radius:8px';bar.textContent='HD grab armed…';document.body.appendChild(bar);var done=false,total=null;function parse(t){var out=[];try{var d=JSON.parse(t);var sm=d&&d.data&&d.data.searchModel;if(sm){var sr=sm.searchReport||sm.metadata||{};var tv=sr.totalProducts||sr.recordCount||sr.totalResults;if(tv!=null&&total==null)total=parseInt(tv);}var ps=(sm&&sm.products)||[];ps.forEach(function(p){var pr=p.pricing||{};var pm=pr.promotion||{};var id=p.identifiers||{};var img=((p.media&&p.media.images&&p.media.images[0]&&p.media.images[0].url)||'').replace('<SIZE>','600');out.push({sku:String(p.itemId||id.itemId||''),name:id.productLabel||'',brand:id.brandName||'',model:id.modelNumber||'',url:id.canonicalUrl?('https://www.homedepot.com'+id.canonicalUrl):'',image:img,now_price:pr.value!=null?pr.value:null,was_price:pr.original!=null?pr.original:null,discount_pct:pm.percentageOff!=null?pm.percentageOff:null});});}catch(e){}return out;}function fin(all){done=true;bar.remove();if(!all.length){alert('No products captured — click Next/Sort once after arming.');return;}var json=JSON.stringify({source:'homedepot-domgrab',retailer:'homedepot',products:all});navigator.clipboard.writeText(json).then(function(){alert('✓ Grabbed '+all.length+' Home Depot deals!\n\nPaste below and Import.');}).catch(function(){var w=window.open('','_blank');w.document.body.innerHTML='<textarea style=&quot;width:100%;height:90vh&quot;></textarea>';w.document.querySelector('textarea').value=json;});}var of=window.fetch;window.fetch=function(){var a=arguments;var u=(a[0]&&a[0].url)?a[0].url:String(a[0]);var init=a[1]||{};var body=init.body;if(!done&&(/opname=searchModel/i.test(u)||(body&&/&quot;operationName&quot;:&quot;searchModel&quot;/.test(String(body))))){window.fetch=of;try{var tmpl=JSON.parse(String(body));var H=init.headers;var all=[],seen={},ps=tmpl.variables.pageSize||24,empties=0,zs=0;bar.textContent='HD grab: paging…';(function loop(i){tmpl.variables.startIndex=i;of(u,{method:'POST',headers:H,credentials:'include',body:JSON.stringify(tmpl)}).then(function(r){return r.text();}).then(function(t){var pr=parse(t);var add=0;pr.forEach(function(p){if(p.sku&&!seen[p.sku]){seen[p.sku]=1;all.push(p);add++;}});bar.textContent='HD grab: '+all.length+' products…';if(pr.length===0){if(empties<1){empties++;return setTimeout(function(){loop(i);},1500);}return fin(all);}empties=0;if(add===0){zs++;if(zs>=2)return fin(all);}else{zs=0;}if(i>2000)return fin(all);setTimeout(function(){loop(i+ps);},500);}).catch(function(){if(empties<1){empties++;return setTimeout(function(){loop(i);},2000);}fin(all);});})(0);}catch(e){bar.remove();alert('grab error: '+e.message);}return of.apply(this,a);}return of.apply(this,a);};alert('HD grab armed. Now click page 2 / Next (or change Sort) ONCE — it grabs the whole list automatically (watch the orange counter).');})();" draggable="true">&#128203; Grab Home Depot Deals</a><br>
-              <strong>2.</strong> On <strong>homedepot.com</strong>, open a clearance / Special Values listing for your store, click the bookmarklet (it "arms"), then click <strong>page 2 / Next</strong> (or change Sort) once — it pages the whole feed automatically (watch the counter, top-right).<br>
-              <strong>3.</strong> Paste below and Import.
-            </p>
+
+            <div class="form-group" style="margin-bottom:8px">
+              <label class="scanner-field-label" id="apify-keyword-label">Search keyword</label>
+              <input type="text" id="apify-keyword" class="scanner-input" style="width:100%"
+                     value="clearance" placeholder="clearance, clearance tools, outdoor clearance…" autocomplete="off" />
             </div>
-            <textarea id="scanner-import-data" class="scanner-input" rows="3"
-                      style="width:100%;font-family:monospace;font-size:0.72em;resize:vertical;margin-bottom:8px"
-                      placeholder="Paste grabbed deal data here…" autocomplete="off"></textarea>
-            <div class="scanner-input-row" style="margin-bottom:8px;align-items:center">
+
+            <!-- TSC-specific: store number field -->
+            <div class="form-group" id="apify-store-num-group" style="display:none;margin-bottom:8px">
+              <label class="scanner-field-label">TSC Store Number</label>
+              <input type="number" id="apify-store-number" class="scanner-input" style="width:120px"
+                     placeholder="e.g. 1234" autocomplete="off" />
+              <div style="font-size:11px;color:var(--text-dim);margin-top:3px">Find yours at tractorsupply.com → Store Finder. Leave blank to use saved setting.</div>
+            </div>
+
+            <div class="scanner-input-row" style="margin-bottom:12px;align-items:center">
               <label class="scanner-field-label" style="margin:0">Max price&nbsp;$</label>
-              <input type="number" id="scanner-import-maxprice" class="scanner-input" min="0" step="1"
+              <input type="number" id="apify-max-price" class="scanner-input" min="0" step="1"
                      placeholder="any" style="width:90px" autocomplete="off" />
             </div>
-            <button class="btn btn-scanner scanner-go-btn" id="scanner-import-btn" onclick="importDeals()">&#128229; Import Deals</button>
+
+            <button class="btn btn-scanner scanner-go-btn" id="apify-run-btn" onclick="runApifyScan()">&#9654; Run Scan</button>
+          </div>
+
+          <!-- From Browser Extension -->
+          <div class="scanner-section" style="margin-top:14px">
+            <div class="scanner-section-title">&#129513; Browser Extension</div>
+            <p class="scanner-import-help">
+              Free, works on any retailer. Install the extension, browse to a clearance page, click the extension button — products appear here automatically.
+            </p>
+
+            <div id="browser-import-waiting" style="display:none;margin:8px 0">
+              <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim)">
+                <span style="animation:spin 1.2s linear infinite;display:inline-block">&#8635;</span>
+                <span>Listening for browser scans…</span>
+              </div>
+            </div>
+            <div id="browser-import-ready" style="display:none;margin:8px 0">
+              <div style="font-size:12px;padding:8px 10px;background:rgba(42,122,90,0.18);border:1px solid rgba(42,122,90,0.4);border-radius:6px">
+                <strong id="browser-import-count">0 products</strong> from browser —
+                <button class="btn-inline" onclick="loadBrowserImport()">Load into grid</button>
+                &nbsp;<button class="btn-inline btn-inline-dim" onclick="dismissBrowserImport()">Dismiss</button>
+              </div>
+            </div>
+
+            <div style="font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.5">
+              <strong style="color:var(--text-sec)">Install:</strong>
+              Clone the repo → Chrome Extensions → Enable Developer mode → Load unpacked → select <code>extension/</code> folder
+            </div>
           </div>
 
         </div>
@@ -153,8 +183,8 @@
           <!-- Empty state -->
           <div id="scanner-empty-state" class="scanner-empty-state">
             <div class="scanner-empty-icon">&#128269;</div>
-            <div class="scanner-empty-title">Ready to import</div>
-            <div class="scanner-empty-body">Use a <strong>Grab Deals</strong> bookmarklet on Lowe's or Home Depot, then paste here and Import to compare against eBay.</div>
+            <div class="scanner-empty-title">Ready to scan</div>
+            <div class="scanner-empty-body">Enter a search keyword (e.g. <strong>clearance tools</strong>), set an optional price cap, and click <strong>Run Scan</strong>. Results are compared against eBay sold prices automatically.</div>
           </div>
 
         </div>
@@ -172,110 +202,84 @@
 
       <div class="modal-body">
         <div class="form-section" id="lookup-section">
-          <div class="form-row">
-            <div class="form-group flex-1">
-              <label>Barcode / UPC</label>
-              <input type="text" id="barcode" placeholder="Enter UPC barcode&hellip;" />
-            </div>
-            <button class="btn btn-secondary lookup-btn" onclick="lookupBarcode()">&#128269; Lookup</button>
+          <div class="lookup-row">
+            <input type="text" id="lookup-query" class="lookup-input"
+                   placeholder="UPC barcode or search term…" autocomplete="off"
+                   onkeydown="if(event.key==='Enter')lookupProduct()" />
+            <button class="btn btn-secondary" onclick="lookupProduct()">&#128269; Lookup</button>
           </div>
-          <div class="form-row">
-            <div class="form-group flex-1">
-              <label>&#8212; or search by name &#8212;</label>
-              <input type="text" id="search-name" placeholder="Product name to search eBay&hellip;" />
-            </div>
-            <button class="btn btn-secondary lookup-btn" onclick="lookupEbayByName()">&#128722; eBay Prices</button>
-          </div>
+          <div id="lookup-result" class="lookup-result" style="display:none"></div>
         </div>
 
         <div class="form-section">
-          <div class="section-title-row">
-            <h3 class="section-title" style="margin:0">Product Info</h3>
-            <span id="modal-upc-badge" class="upc-badge" style="display:none" onclick="copyUpc(this)" title="Click to copy UPC">&#128203; <span id="modal-upc-text"></span></span>
-          </div>
           <div class="form-row">
-            <div class="product-image-preview" id="image-preview"><span>No image</span></div>
+            <div class="form-group flex-2">
+              <label>Item Name</label>
+              <input type="text" id="item-name" placeholder="e.g. DEWALT 20V Drill" autocomplete="off" required />
+            </div>
             <div class="form-group flex-1">
-              <label>Product Name <span class="required">*</span></label>
-              <input type="text" id="item-name" placeholder="Name" required />
-              <div class="form-row" style="margin-top:10px;gap:10px">
-                <div class="form-group" style="flex:2;margin:0">
-                  <label>Category</label>
-                  <input type="text" id="item-category" placeholder="Electronics, Toys…" />
-                </div>
-                <div class="form-group" style="flex:1;margin:0">
-                  <label>Shelf</label>
-                  <input type="text" id="item-shelf" placeholder="A3, Bin 7…" />
-                </div>
-              </div>
+              <label>Category <span class="optional">(optional)</span></label>
+              <input type="text" id="item-category" placeholder="e.g. Tools" autocomplete="off" />
             </div>
           </div>
           <div class="form-group">
-            <label>Image URL</label>
-            <input type="text" id="item-image" placeholder="https://&hellip;" oninput="previewImage(this.value)" />
+            <label>Image URL <span class="optional">(optional)</span></label>
+            <div class="image-row">
+              <input type="text" id="item-image" placeholder="https://…" autocomplete="off"
+                     oninput="previewImage(this.value)" />
+              <div id="image-preview" class="image-preview"></div>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Notes</label>
-            <textarea id="item-notes" rows="2" placeholder="Condition, lot info, etc."></textarea>
-          </div>
-        </div>
-
-        <div class="form-section" id="ebay-section" style="display:none">
-          <h3 class="section-title">eBay Sold Prices</h3>
-          <div class="ebay-prices">
-            <div class="price-badge low">Low <span id="ebay-low">&#8212;</span></div>
-            <div class="price-badge avg">Avg <span id="ebay-avg">&#8212;</span></div>
-            <div class="price-badge high">High <span id="ebay-high">&#8212;</span></div>
-          </div>
-          <div id="ebay-count" class="ebay-count"></div>
-          <div id="recent-sales" class="recent-sales"></div>
         </div>
 
         <div class="form-section">
           <h3 class="section-title">Purchase</h3>
           <div class="form-row">
             <div class="form-group flex-1">
-              <label>Buy Price ($) <span class="field-hint">per unit</span></label>
-              <input type="number" id="buy-price" step="0.01" min="0" placeholder="0.00" />
-            </div>
-            <div class="form-group" style="width:90px">
-              <label>Qty</label>
-              <input type="number" id="item-quantity" min="1" step="1" value="1" placeholder="1" />
+              <label>Buy Price ($)</label>
+              <input type="number" id="buy-price" step="0.01" min="0" placeholder="0.00"
+                     oninput="updateProfitPreview()" autocomplete="off" />
             </div>
             <div class="form-group flex-1">
               <label>Buy Date</label>
-              <input type="date" id="buy-date" />
+              <input type="date" id="buy-date" autocomplete="off" />
+            </div>
+            <div class="form-group flex-1">
+              <label>Store / Source <span class="optional">(optional)</span></label>
+              <input type="text" id="buy-store" placeholder="e.g. Lowe's" autocomplete="off" />
             </div>
           </div>
         </div>
 
-        <div class="form-section">
-          <h3 class="section-title">Sale</h3>
+        <div class="form-section" id="sell-section">
+          <h3 class="section-title">Sale <span class="optional">(fill when sold)</span></h3>
           <div class="form-row">
             <div class="form-group flex-1">
               <label>Sell Price ($)</label>
-              <input type="number" id="sell-price" step="0.01" min="0" placeholder="0.00" />
+              <input type="number" id="sell-price" step="0.01" min="0" placeholder="0.00"
+                     oninput="updateProfitPreview()" autocomplete="off" />
             </div>
             <div class="form-group flex-1">
               <label>Sell Date</label>
-              <input type="date" id="sell-date" />
+              <input type="date" id="sell-date" autocomplete="off" />
             </div>
           </div>
           <div class="form-row">
             <div class="form-group flex-1">
               <label>Shipping Cost ($)</label>
-              <input type="number" id="shipping-cost" step="0.01" min="0" placeholder="0.00" />
+              <input type="number" id="shipping-cost" step="0.01" min="0" placeholder="0.00"
+                     oninput="updateProfitPreview()" autocomplete="off" />
             </div>
             <div class="form-group flex-1">
-              <label>Selling Platform</label>
+              <label>Platform</label>
               <select id="selling-platform" onchange="updatePlatformFee()">
-                <option value="">&#8212; Select platform &#8212;</option>
+                <option value="">— Select —</option>
                 <option value="eBay" data-fee="13.25">eBay (~13.25%)</option>
-                <option value="Mercari" data-fee="3">Mercari (~3% processing)</option>
+                <option value="Mercari" data-fee="3">Mercari (~3%)</option>
                 <option value="Facebook Marketplace" data-fee="0">Facebook Marketplace (free)</option>
                 <option value="OfferUp" data-fee="12.9">OfferUp (12.9%)</option>
                 <option value="Poshmark" data-fee="20">Poshmark (20%)</option>
-                <option value="Depop" data-fee="3">Depop (~3% processing)</option>
+                <option value="Depop" data-fee="3">Depop (~3%)</option>
                 <option value="Etsy" data-fee="6.5">Etsy (6.5%)</option>
                 <option value="Amazon" data-fee="15">Amazon (15%)</option>
                 <option value="Craigslist" data-fee="0">Craigslist (free)</option>
@@ -286,35 +290,32 @@
           </div>
           <div id="profit-preview" class="profit-preview" style="display:none">
             <div class="profit-row"><span>Revenue</span><span id="calc-revenue">$0.00</span></div>
-            <div class="profit-row"><span>Cost of Item</span><span id="calc-cost">&#8722;$0.00</span></div>
-            <div class="profit-row"><span>Shipping</span><span id="calc-shipping">&#8722;$0.00</span></div>
-            <div class="profit-row"><span>Platform Fee</span><span id="calc-fee">&#8722;$0.00</span></div>
+            <div class="profit-row"><span>Cost of Item</span><span id="calc-cost">−$0.00</span></div>
+            <div class="profit-row"><span>Shipping</span><span id="calc-shipping">−$0.00</span></div>
+            <div class="profit-row"><span>Platform Fee</span><span id="calc-fee">−$0.00</span></div>
             <div class="profit-row total"><span>Net Profit</span><span id="calc-profit">$0.00</span></div>
           </div>
         </div>
 
-        <input type="hidden" id="item-id" />
-        <input type="hidden" id="ebay-avg-val" />
-        <input type="hidden" id="ebay-low-val" />
-        <input type="hidden" id="ebay-high-val" />
-        <input type="hidden" id="platform-fee-pct" value="0" />
-        <input type="hidden" id="item-status" value="inventory" />
+        <div class="form-section">
+          <div class="form-group">
+            <label>Notes <span class="optional">(optional)</span></label>
+            <textarea id="item-notes" rows="2" placeholder="Any notes about this item…" autocomplete="off"></textarea>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer">
-        <div class="status-toggle">
-          <label>Status:</label>
-          <select id="status-select" onchange="document.getElementById('item-status').value=this.value">
-            <option value="inventory">In Inventory</option>
-            <option value="sold">Sold</option>
-          </select>
+        <div>
+          <button class="btn btn-danger" id="delete-btn" onclick="deleteItem()" style="display:none">Delete</button>
         </div>
         <div class="footer-actions">
-          <button class="btn btn-danger" id="modal-delete-btn" style="display:none" onclick="modalDelete()">Delete</button>
           <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="saveItem()">Save Item</button>
+          <button class="btn btn-primary" id="save-btn" onclick="saveItem()">Save Item</button>
         </div>
       </div>
+      <input type="hidden" id="edit-item-id" />
+      <input type="hidden" id="fee-pct" value="0" />
     </div>
   </div>
 
@@ -330,6 +331,7 @@
       <div class="stabs">
         <button class="stab active" id="stab-btn-api"      onclick="switchSettingsTab('api')">&#128273; API Keys</button>
         <button class="stab"        id="stab-btn-telegram" onclick="switchSettingsTab('telegram')">&#128225; Telegram</button>
+        <button class="stab"        id="stab-btn-apify"    onclick="switchSettingsTab('apify')">&#128640; Apify</button>
       </div>
 
       <div class="modal-body">
@@ -374,7 +376,7 @@
           <div class="form-section">
             <h3 class="section-title">Telegram Bot</h3>
             <p class="settings-help">
-              Get deal alerts on your phone when scheduled scans find items.<br>
+              Get deal alerts on your phone when Apify scans find deals.<br>
               1. Message <strong>@BotFather</strong> on Telegram &rarr; <code>/newbot</code> &rarr; copy the token.<br>
               2. Message <strong>@userinfobot</strong> to get your Chat ID.<br>
               3. Start a chat with your bot first so it can message you.
@@ -394,6 +396,44 @@
             </div>
             <button class="btn btn-secondary" id="tg-test-btn" onclick="testTelegram()" style="margin-top:4px">Send Test Message</button>
             <div id="tg-test-result" class="key-status" style="margin-top:6px"></div>
+          </div>
+        </div>
+
+        <!-- Apify Tab -->
+        <div id="stab-apify" style="display:none">
+          <div class="form-section">
+            <h3 class="section-title">Apify API Token</h3>
+            <p class="settings-help">
+              Required to run the Deals Scanner. Get a free token at
+              <a href="https://console.apify.com" target="_blank">console.apify.com</a> &#8599; &rarr;
+              Account &rarr; Integrations &rarr; API tokens. The free plan includes $5/month of compute.
+            </p>
+            <div class="form-group">
+              <label>API Token</label>
+              <div class="key-row">
+                <input type="password" id="setting-apify-token" placeholder="apify_api_…" autocomplete="off" />
+                <button class="btn-eye" onclick="toggleKeyVis('setting-apify-token', this)" title="Show/hide">&#128065;</button>
+              </div>
+              <div id="apify-token-status" class="key-status"></div>
+            </div>
+          </div>
+          <div class="form-section">
+            <h3 class="section-title">Tractor Supply Store Number</h3>
+            <p class="settings-help">
+              TSC inventory is store-specific. Find your store number at tractorsupply.com &rarr; Store Finder &rarr; click your store &rarr; the number appears in the URL.
+            </p>
+            <div class="form-group">
+              <label>Store Number <span class="optional">(optional — scanner uses 10151 if blank)</span></label>
+              <input type="number" id="setting-tsc-store" placeholder="e.g. 1234" autocomplete="off" style="width:160px" />
+              <div id="tsc-store-status" class="key-status"></div>
+            </div>
+          </div>
+          <div class="form-section">
+            <h3 class="section-title">Active Actors</h3>
+            <p class="settings-help">
+              Lowe's: <code>sian.agency/lowes-product-scraper</code> (~$0.56/scan, commercial)<br>
+              TSC: <code>chimerical_quicklime/tractor-supply-products</code> (~$0.03/scan, compute-only)
+            </p>
           </div>
         </div>
 

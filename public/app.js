@@ -158,7 +158,7 @@ function renderCard(item) {
         <div class="platform-row">
           ${platformHtml}
           ${daysHtml}
-          ${item.shelf ? `<span class="shelf-badge">&#128230; ${esc(item.shelf)}</span>` : ''}
+          ${item.shelf && !item.sold_price ? `<span class="shelf-badge">&#128230; ${esc(item.shelf)}</span>` : ''}
         </div>
         ${ebayLiveRow}
         <div class="item-actions">
@@ -538,82 +538,163 @@ async function confirmDelete() {
 }
 
 // ── Deals Scanner ─────────────────────────────────────────────────────────────
-// Import deals grabbed from your own browser (Lowe's / Home Depot bookmarklets),
-// compare them to eBay sold prices, and add the winners to your tracker.
 
 async function openScanner() {
   document.getElementById('scanner-panel').style.display = 'flex';
   document.body.style.overflow = 'hidden';
+  startBrowserImportPolling();
 }
 
 function closeScanner() {
   document.getElementById('scanner-panel').style.display = 'none';
   document.body.style.overflow = '';
+  if (_scanPollInterval) { clearInterval(_scanPollInterval); _scanPollInterval = null; }
+  stopBrowserImportPolling();
 }
 
 function scannerCloseOnBackdrop(e) {
   if (e.target === document.getElementById('scanner-panel')) closeScanner();
 }
 
-// Toggle the Import-from-Browser panel between retailers (Lowe's / Home Depot).
-function switchImportRetailer(retailer) {
-  ['lowes', 'homedepot'].forEach(r => {
-    const panel = document.getElementById(`import-panel-${r}`);
-    if (panel) panel.style.display = r === retailer ? 'block' : 'none';
-    const tab = document.getElementById(`rtab-${r}`);
-    if (tab) tab.classList.toggle('active', r === retailer);
-  });
+let _currentRetailer = 'lowes';
+let _scanPollInterval = null;
+let _importedDeals = [];
+
+// ── Browser-extension import polling ─────────────────────────────────────────
+
+let _browserImportInterval = null;
+let _browserPendingProducts = null;
+
+async function checkBrowserImport() {
+  try {
+    const data = await api('/api/scan/pending');
+    if (data && Array.isArray(data.products) && data.products.length > 0) {
+      _browserPendingProducts = data.products;
+      const countEl = document.getElementById('browser-import-count');
+      if (countEl) countEl.textContent = `${data.products.length} product${data.products.length === 1 ? '' : 's'}`;
+      document.getElementById('browser-import-waiting').style.display = 'none';
+      document.getElementById('browser-import-ready').style.display = 'block';
+    }
+  } catch { /* network glitch */ }
 }
 
-async function importDeals() {
-  const ta = document.getElementById('scanner-import-data');
-  const raw = ta.value.trim();
-  if (!raw) return toast('Paste grabbed deal data first (use a Grab Deals bookmarklet)', 'error');
-
-  const maxPriceRaw = document.getElementById('scanner-import-maxprice').value.trim();
-  const maxPrice = maxPriceRaw ? parseFloat(maxPriceRaw) : null;
-
-  const statusEl  = document.getElementById('scanner-status');
-  const gridEl    = document.getElementById('scanner-grid');
-  const importBtn = document.getElementById('scanner-import-btn');
-  const emptyEl   = document.getElementById('scanner-empty-state');
-
-  // Reset UI
-  statusEl.innerHTML = '';
-  gridEl.innerHTML   = '';
+function loadBrowserImport() {
+  if (!_browserPendingProducts || _browserPendingProducts.length === 0) return;
+  _importedDeals = _browserPendingProducts;
+  _browserPendingProducts = null;
+  document.getElementById('browser-import-ready').style.display = 'none';
+  document.getElementById('browser-import-waiting').style.display = 'block';
+  const statusEl = document.getElementById('scanner-status');
+  const emptyEl  = document.getElementById('scanner-empty-state');
   if (emptyEl) emptyEl.style.display = 'none';
-  importBtn.disabled = true;
-  statusEl.innerHTML = '<div class="scanner-count">Parsing imported deals…</div>';
+  const count = _importedDeals.length;
+  statusEl.innerHTML = `<div class="scanner-count"><strong>${count}</strong> product${count === 1 ? '' : 's'} from browser. <button class="btn btn-primary btn-xs" id="ebay-compare-btn" onclick="compareAllToEbay()">&#128176; Compare all to eBay</button></div>`;
+  renderDealGrid();
+}
 
-  try {
-    const data = await api('/api/lowes/import', 'POST', { nextData: raw, maxPrice });
-    importBtn.disabled = false;
+function dismissBrowserImport() {
+  _browserPendingProducts = null;
+  document.getElementById('browser-import-ready').style.display = 'none';
+  document.getElementById('browser-import-waiting').style.display = 'block';
+}
 
-    // api() returns the body even on 4xx/5xx; surface server error messages
-    if (data.error && !data.imported) {
-      statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Import failed</strong><br>${esc(data.message || data.error)}</div>`;
-      return;
-    }
+function startBrowserImportPolling() {
+  document.getElementById('browser-import-waiting').style.display = 'block';
+  document.getElementById('browser-import-ready').style.display = 'none';
+  checkBrowserImport();
+  _browserImportInterval = setInterval(checkBrowserImport, 8000);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+}
 
-    if (!data.products?.length) {
-      statusEl.innerHTML = `<div class="scanner-empty">${esc(data.message || 'No deals found in the pasted data. Make sure the page finished loading (scroll down once) before grabbing.')}</div>`;
-      return;
-    }
+function stopBrowserImportPolling() {
+  if (_browserImportInterval) { clearInterval(_browserImportInterval); _browserImportInterval = null; }
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  document.getElementById('browser-import-waiting').style.display = 'none';
+  document.getElementById('browser-import-ready').style.display = 'none';
+}
 
-    _importedDeals = data.products;
-    const priceNote = maxPrice ? ` under $${maxPrice}` : '';
-    statusEl.innerHTML = `<div class="scanner-count">Imported <strong>${data.products.length}</strong> deals${priceNote} (from ${data.total} grabbed). <button class="btn btn-primary btn-xs" id="ebay-compare-btn" onclick="compareAllToEbay()">&#128176; Compare all to eBay</button></div>`;
-    renderDealGrid();
-    ta.value = ''; // clear the big blob once imported
-  } catch (err) {
-    importBtn.disabled = false;
-    const msg = err?.message || 'Import failed. Re-grab with a Grab Deals bookmarklet.';
-    statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Import failed</strong><br>${esc(msg)}</div>`;
+function onVisibilityChange() {
+  if (!document.hidden) checkBrowserImport();
+}
+
+function selectApifyRetailer(retailer) {
+  _currentRetailer = retailer;
+  document.querySelectorAll('#apify-retailer-tabs .rtab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.retailer === retailer);
+  });
+  const kwEl    = document.getElementById('apify-keyword');
+  const storeEl = document.getElementById('apify-store-num-group');
+  const labelEl = document.getElementById('apify-keyword-label');
+  if (retailer === 'tractorsupply') {
+    if (kwEl) { kwEl.value = kwEl.value || 'power tools,outdoor tools,chainsaws'; kwEl.placeholder = 'power tools, chainsaws, generators (comma-separated)'; }
+    if (labelEl) labelEl.textContent = 'Search keywords (comma-separated)';
+    if (storeEl) storeEl.style.display = 'block';
+  } else {
+    if (kwEl) { kwEl.value = kwEl.value || 'clearance'; kwEl.placeholder = 'clearance, clearance tools, outdoor clearance…'; }
+    if (labelEl) labelEl.textContent = 'Search keyword';
+    if (storeEl) storeEl.style.display = 'none';
   }
 }
 
-// Imported deals are kept here so the eBay comparison can enrich + re-sort them.
-let _importedDeals = [];
+async function runApifyScan() {
+  const keyword     = (document.getElementById('apify-keyword').value || '').trim() || 'clearance';
+  const maxPriceRaw = document.getElementById('apify-max-price').value.trim();
+  const storeNumRaw = (document.getElementById('apify-store-number')?.value || '').trim();
+  const opts        = storeNumRaw ? { storeNumber: storeNumRaw } : {};
+  const maxPrice   = maxPriceRaw ? parseFloat(maxPriceRaw) : null;
+  const statusEl   = document.getElementById('scanner-status');
+  const gridEl     = document.getElementById('scanner-grid');
+  const emptyEl    = document.getElementById('scanner-empty-state');
+  const runBtn     = document.getElementById('apify-run-btn');
+
+  gridEl.innerHTML = '';
+  statusEl.innerHTML = '';
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (_scanPollInterval) { clearInterval(_scanPollInterval); _scanPollInterval = null; }
+  runBtn.disabled = true;
+  statusEl.innerHTML = '<div class="scanner-count">Starting Apify scan…</div>';
+
+  try {
+    const data = await api('/api/scan/run', 'POST', { retailer: _currentRetailer, keyword, opts });
+    if (data.error) {
+      runBtn.disabled = false;
+      statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Error</strong><br>${esc(data.error)}</div>`;
+      return;
+    }
+
+    const runId     = data.runId;
+    const startTime = Date.now();
+    statusEl.innerHTML = `<div class="scanner-count">Scan running… (typically 1–3 min) <span id="scan-elapsed">0s</span></div>`;
+
+    _scanPollInterval = setInterval(async () => {
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      const el = document.getElementById('scan-elapsed');
+      if (el) el.textContent = `${elapsed}s`;
+      try {
+        const status = await api(`/api/scan/status/${runId}?retailer=${_currentRetailer}`);
+        if (status.status === 'SUCCEEDED') {
+          clearInterval(_scanPollInterval); _scanPollInterval = null;
+          runBtn.disabled = false;
+          let products = status.products || [];
+          if (maxPrice != null) products = products.filter(p => p.now_price == null || p.now_price <= maxPrice);
+          products.sort((a, b) => (b.discount_pct ?? -1) - (a.discount_pct ?? -1));
+          _importedDeals = products;
+          const priceNote = maxPrice ? ` under $${maxPrice}` : '';
+          statusEl.innerHTML = `<div class="scanner-count">Found <strong>${products.length}</strong> results${priceNote} (${status.total} total scraped). <button class="btn btn-primary btn-xs" id="ebay-compare-btn" onclick="compareAllToEbay()">&#128176; Compare all to eBay</button></div>`;
+          renderDealGrid();
+        } else if (['FAILED', 'ABORTED', 'TIMED-OUT'].includes(status.status)) {
+          clearInterval(_scanPollInterval); _scanPollInterval = null;
+          runBtn.disabled = false;
+          statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; ${status.status}</strong><br>${esc(status.error || 'Scan ended unexpectedly. Check your Apify console.')}</div>`;
+        }
+      } catch { /* network glitch — keep polling */ }
+    }, 5000);
+
+  } catch (err) {
+    runBtn.disabled = false;
+    statusEl.innerHTML = `<div class="scanner-error"><strong>&#9888; Error</strong><br>${esc(err.message || 'Scan failed')}</div>`;
+  }
+}
 
 function renderDealGrid() {
   document.getElementById('scanner-grid').innerHTML = _importedDeals.map(renderScanCard).join('');
@@ -993,14 +1074,14 @@ function toast(msg, type = '') {
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 function switchSettingsTab(tab) {
-  ['api', 'telegram'].forEach(t => {
+  ['api', 'telegram', 'apify'].forEach(t => {
     document.getElementById(`stab-${t}`).style.display      = t === tab ? 'block' : 'none';
     document.getElementById(`stab-btn-${t}`).classList.toggle('active', t === tab);
   });
 }
 
-async function openSettings() {
-  switchSettingsTab('api');
+async function openSettings(tab = 'api') {
+  switchSettingsTab(tab);
   const data = await api('/api/settings');
 
   const ebayInput = document.getElementById('setting-ebay-app-id');
@@ -1048,6 +1129,22 @@ async function openSettings() {
     : '<span class="key-missing">&#9675; Not set</span>';
   document.getElementById('tg-test-result').innerHTML = '';
 
+  // Apify tab
+  if (data.APIFY_TOKEN?.configured) {
+    document.getElementById('setting-apify-token').placeholder = data.APIFY_TOKEN.preview;
+    document.getElementById('setting-apify-token').value = '';
+    document.getElementById('apify-token-status').innerHTML = '<span class="key-ok">&#10003; Configured — scanner enabled</span>';
+  } else {
+    document.getElementById('setting-apify-token').placeholder = 'apify_api_…';
+    document.getElementById('setting-apify-token').value = '';
+    document.getElementById('apify-token-status').innerHTML = '<span class="key-missing">&#9675; Not set — scanner disabled</span>';
+  }
+  const tscStore = data.TSC_STORE_NUMBER || '';
+  document.getElementById('setting-tsc-store').value = tscStore;
+  document.getElementById('tsc-store-status').innerHTML = tscStore
+    ? `<span class="key-ok">&#10003; Store ${tscStore}</span>`
+    : '<span class="key-missing">&#9675; Not set — using default 10151</span>';
+
   if (data.VERSION) document.getElementById('settings-version').textContent = `v${data.VERSION}`;
 
   document.getElementById('settings-modal').style.display = 'flex';
@@ -1059,15 +1156,19 @@ function closeSettings() {
 
 async function saveSettings() {
   const body = {};
-  const ebayVal     = document.getElementById('setting-ebay-app-id').value.trim();
-  const upcVal      = document.getElementById('setting-upc-key').value.trim();
-  const tgToken     = document.getElementById('setting-tg-token').value.trim();
-  const tgChatId    = document.getElementById('setting-tg-chat-id').value.trim();
+  const ebayVal    = document.getElementById('setting-ebay-app-id').value.trim();
+  const upcVal     = document.getElementById('setting-upc-key').value.trim();
+  const tgToken    = document.getElementById('setting-tg-token').value.trim();
+  const tgChatId   = document.getElementById('setting-tg-chat-id').value.trim();
+  const apifyToken = document.getElementById('setting-apify-token').value.trim();
+  const tscStore   = document.getElementById('setting-tsc-store').value.trim();
 
-  if (ebayVal)      body.EBAY_APP_ID       = ebayVal;
-  if (upcVal)       body.UPC_API_KEY       = upcVal;
-  if (tgToken)      body.TELEGRAM_BOT_TOKEN = tgToken;
-  if (tgChatId)     body.TELEGRAM_CHAT_ID  = tgChatId;
+  if (ebayVal)    body.EBAY_APP_ID        = ebayVal;
+  if (upcVal)     body.UPC_API_KEY        = upcVal;
+  if (tgToken)    body.TELEGRAM_BOT_TOKEN = tgToken;
+  if (tgChatId)   body.TELEGRAM_CHAT_ID   = tgChatId;
+  if (apifyToken) body.APIFY_TOKEN        = apifyToken;
+  if (tscStore)   body.TSC_STORE_NUMBER   = tscStore;
 
   if (Object.keys(body).length === 0) { closeSettings(); return; }
   await api('/api/settings', 'POST', body);

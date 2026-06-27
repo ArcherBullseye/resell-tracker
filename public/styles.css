@@ -754,20 +754,11 @@ textarea { resize: vertical; }
 .settings-help a { color: var(--accent); text-decoration: none; }
 .settings-help a:hover { text-decoration: underline; }
 
-.bookmarklet-link {
-  display: inline-block;
-  margin-top: 6px;
-  padding: 6px 14px;
-  background: var(--accent);
-  color: #fff !important;
-  border-radius: 8px;
-  font-size: 0.82em;
-  font-weight: 600;
-  cursor: grab;
-  text-decoration: none !important;
-  user-select: none;
+.inline-link {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
 }
-.bookmarklet-link:hover { opacity: 0.85; text-decoration: none !important; }
 
 .optional { font-size: 11px; color: var(--text-dim); font-weight: 400; }
 .field-hint { font-size: 11px; color: var(--text-dim); font-weight: 400; }
@@ -907,10 +898,6 @@ textarea { resize: vertical; }
   margin-bottom: 12px;
 }
 
-.scanner-import-section {
-  margin-top: 4px;
-  border-color: var(--accent, var(--border));
-}
 .scanner-import-help {
   font-size: 12px;
   color: var(--text-dim);
@@ -1395,3 +1382,8 @@ textarea { resize: vertical; }
 .expense-row-amount { font-weight: 600; white-space: nowrap; }
 .expenses-empty { color: var(--text-dim); font-size: 0.85em; padding: 12px 4px; text-align: center; }
 .expenses-grand-total { font-size: 0.9em; color: var(--text-dim); }
+
+/* Browser import spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn-inline { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; text-decoration: underline; }
+.btn-inline-dim { color: var(--text-dim); }

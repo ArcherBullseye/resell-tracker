@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      width: 280px;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-size: 13px;
+    }
+    .header {
+      background: #16213e;
+      padding: 12px 14px;
+      border-bottom: 1px solid #2d2d4e;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header-title { font-weight: 600; font-size: 14px; }
+    .site-badge {
+      background: #2a7a5a;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 10px;
+      margin-left: auto;
+    }
+    .site-badge.unsupported { background: #555; }
+    .body { padding: 12px 14px; }
+    .scan-btn {
+      width: 100%;
+      padding: 10px;
+      background: #2a7a5a;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    .scan-btn:disabled { background: #444; cursor: default; }
+    .scan-btn:hover:not(:disabled) { background: #339966; }
+    .status {
+      font-size: 12px;
+      min-height: 36px;
+      padding: 6px 8px;
+      border-radius: 5px;
+      background: #12122a;
+      margin-bottom: 10px;
+      white-space: pre-wrap;
+    }
+    .status.ok    { color: #4caf80; }
+    .status.err   { color: #f08080; }
+    .status.info  { color: #a0a8c0; }
+    .divider {
+      border: none;
+      border-top: 1px solid #2d2d4e;
+      margin: 10px 0;
+    }
+    .settings-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .settings-row label { font-size: 11px; color: #888; white-space: nowrap; }
+    .settings-row input {
+      flex: 1;
+      background: #12122a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #e0e0e0;
+      padding: 4px 6px;
+      font-size: 11px;
+    }
+    .save-btn {
+      padding: 4px 8px;
+      background: #2d4070;
+      color: #e0e0e0;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .save-btn:hover { background: #3a52a0; }
+    .hint { font-size: 10px; color: #666; margin-top: 8px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span>&#129513;</span>
+    <span class="header-title">Resell Tracker</span>
+    <span class="site-badge unsupported" id="site-badge">Loading…</span>
+  </div>
+  <div class="body">
+    <button class="scan-btn" id="scan-btn" disabled>&#9654; Scan &amp; Send</button>
+    <div class="status info" id="status">Detecting page…</div>
+    <hr class="divider" />
+    <div class="settings-row">
+      <label>Umbrel URL</label>
+      <input type="text" id="umbrel-url" placeholder="http://umbrel.local:3000" />
+      <button class="save-btn" id="save-btn">Save</button>
+    </div>
+    <div class="hint">Open your Resell Tracker scanner tab before clicking Scan &amp; Send — products appear there automatically.</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

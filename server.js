@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -127,13 +127,13 @@ function setSetting(key, value) {
   `).run(key, value);
 }
 
-app.use(express.json({ limit: '12mb' })); // __NEXT_DATA__ blobs from bookmarklet import can be large
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 app.get('/api/settings', (req, res) => {
-  const masked = ['EBAY_APP_ID', 'UPC_API_KEY', 'TELEGRAM_BOT_TOKEN'];
+  const masked = ['EBAY_APP_ID', 'UPC_API_KEY', 'TELEGRAM_BOT_TOKEN', 'APIFY_TOKEN'];
   const result = {};
   for (const key of masked) {
     const val = getSetting(key);
@@ -141,13 +141,14 @@ app.get('/api/settings', (req, res) => {
       ? { configured: true, preview: val.slice(-4).padStart(val.length, '•') }
       : { configured: false, preview: '' };
   }
-  result.TELEGRAM_CHAT_ID = getSetting('TELEGRAM_CHAT_ID');
+  result.TELEGRAM_CHAT_ID  = getSetting('TELEGRAM_CHAT_ID');
+  result.TSC_STORE_NUMBER  = getSetting('TSC_STORE_NUMBER');
   result.VERSION = VERSION;
   res.json(result);
 });
 
 app.post('/api/settings', (req, res) => {
-  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+  const allowed = ['EBAY_APP_ID', 'UPC_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'APIFY_TOKEN', 'TSC_STORE_NUMBER'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -503,77 +504,143 @@ async function sendTelegram(text) {
 }
 
 app.post('/api/telegram/test', async (req, res) => {
-  const result = await sendTelegram('✅ <b>Resell Tracker</b> — Telegram is connected! You\'ll get alerts here when scheduled scans find deals.');
+  const result = await sendTelegram('✅ <b>Resell Tracker</b> — Telegram is connected! You\'ll get alerts here when Apify scans find deals.');
   if (result.ok) res.json({ ok: true });
   else res.status(400).json({ ok: false, error: result.description || result.error || 'Failed' });
 });
 
-// Filter a pre-extracted product array from the "Grab Lowe's Deals" bookmarklet.
-// Lowe's renders the deals grid in web components, so the bookmarklet builds the
-// product list from JSON-LD (name/sku/price/image/url — always present) and
-// best-effort harvests the discount from the DOM by SKU. Discount is therefore
-// often unknown; items with unknown discount are always kept (best-effort filter).
-function filterGrabbedProducts(rawProducts, maxPrice) {
-  const products = (rawProducts || [])
-    .map(p => {
-      const now = p.now_price != null ? Number(p.now_price) : null;
-      const was = p.was_price != null ? Number(p.was_price) : null;
-      let pct = p.discount_pct != null ? Number(p.discount_pct) : null;
-      if (pct == null && was && now && was > now) pct = Math.round((was - now) / was * 100);
-      return {
-        id:           p.sku || null,
-        name:         p.name || '',
-        image:        p.image || null,
-        now_price:    now,
-        was_price:    was,
-        discount_pct: pct,
-        model:        null,
-        category:     p.brand || null,
-        url:          p.url || null,
-        store_avail:  null,
-      };
-    })
-    .filter(p => p.name)
-    // optional max-price ceiling (items with unknown price are always kept)
-    .filter(p => maxPrice == null || p.now_price == null || p.now_price <= maxPrice)
-    .sort((a, b) => {
-      const da = a.discount_pct == null ? -1 : a.discount_pct;
-      const db = b.discount_pct == null ? -1 : b.discount_pct;
-      if (db !== da) return db - da;             // known discounts first, deepest first
-      return (a.now_price ?? Infinity) - (b.now_price ?? Infinity); // then cheapest first
-    });
-  return { products, total: (rawProducts || []).length };
-}
+// ── Apify Scanner ─────────────────────────────────────────────────────────────
 
-// Bookmarklet import — parse the deal data the "Grab Lowe's Deals" bookmarklet
-// copied from the user's real (human, Akamai-passed) browser session.
-app.post('/api/lowes/import', (req, res) => {
-  const { nextData, minDiscount = 30, maxPrice = null } = req.body;
-  if (!nextData) return res.status(400).json({ error: 'NO_DATA', message: 'No data pasted. Use the "Grab Lowe\'s Deals" bookmarklet on a Lowe\'s deals page, then paste here.' });
-  let obj;
-  try {
-    obj = typeof nextData === 'string' ? JSON.parse(nextData) : nextData;
-  } catch {
-    return res.status(400).json({ error: 'BAD_JSON', message: 'That doesn\'t look like valid deal data. Re-grab with the "Grab Lowe\'s Deals" bookmarklet on a Lowe\'s deals page, then paste.' });
+const APIFY_BASE = 'https://api.apify.com/v2';
+
+// Verified actors (confirmed live on 2026-06-27):
+//   lowes: sian.agency~lowes-product-scraper — keyword search, ~$0.56/25 results (has commercial tier)
+//   tsc:   chimerical_quicklime~tractor-supply-products — keyword search, ~$0.027/100 results (compute-only)
+const RETAILER_ACTORS = {
+  lowes: {
+    label: "Lowe's",
+    actorId: 'sian.agency~lowes-product-scraper',
+    buildInput: (kw, _opts) => ({ keywords: [kw], maxResults: 100, scrapeMode: 'overview', sort: 'featured' }),
+    normalize: raw => ({
+      id:           String(raw.item_id || ''),
+      name:         raw.productTitle || '',
+      now_price:    raw.price          != null ? Number(raw.price)           : null,
+      was_price:    raw.original_price != null ? Number(raw.original_price)  : null,
+      discount_pct: null,
+      url:          raw.url || '',
+      image:        (Array.isArray(raw.images) && raw.images[0]) || raw.thumbnail || null,
+      category:     raw.department || raw.brand || null,
+      model:        raw.model_number || null,
+    }),
+  },
+  tractorsupply: {
+    label: 'Tractor Supply',
+    actorId: 'chimerical_quicklime~tractor-supply-products',
+    buildInput: (kw, opts) => ({
+      keywords: kw.split(',').map(s => s.trim()).filter(Boolean),
+      maxItems: 100,
+      storeNumber: Number(opts?.storeNumber) || 10151,
+    }),
+    normalize: raw => ({
+      id:           String(raw.uniqueID || raw.partNumber || ''),
+      name:         raw.name || '',
+      now_price:    raw.price != null ? Number(raw.price) : null,
+      was_price:    null,
+      discount_pct: null,
+      url:          raw.productUrl || '',
+      image:        raw.thumbnail || null,
+      category:     raw.manufacturer || null,
+      model:        raw.partNumber || null,
+    }),
+  },
+};
+
+app.get('/api/scan/retailers', (req, res) => {
+  res.json(Object.entries(RETAILER_ACTORS).map(([key, r]) => ({ key, label: r.label })));
+});
+
+app.post('/api/scan/run', async (req, res) => {
+  const { retailer, keyword, opts = {} } = req.body;
+  const token = getSetting('APIFY_TOKEN');
+  if (!token) return res.status(400).json({ error: 'APIFY_TOKEN not configured — add it in Settings → Apify.' });
+  const config = RETAILER_ACTORS[retailer];
+  if (!config) return res.status(400).json({ error: `Unknown retailer: ${retailer}` });
+  const actorId = getSetting(`APIFY_ACTOR_${retailer.toUpperCase()}`) || config.actorId;
+
+  // Merge saved per-retailer settings into opts
+  if (retailer === 'tractorsupply' && !opts.storeNumber) {
+    const saved = getSetting('TSC_STORE_NUMBER');
+    if (saved) opts.storeNumber = saved;
   }
+
   try {
-    const maxP = (maxPrice != null && maxPrice !== '' && !isNaN(maxPrice)) ? Number(maxPrice) : null;
-    // Grabber bookmarklet format: { source:'<retailer>-domgrab', retailer, products:[...] }
-    const isGrab = obj && typeof obj.source === 'string' && obj.source.endsWith('-domgrab') && Array.isArray(obj.products);
-    if (!isGrab) {
-      return res.status(400).json({ error: 'BAD_FORMAT', message: 'Use the current "Grab Deals" bookmarklet on a deals page — it produces the expected format.' });
+    const r = await fetch(
+      `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/runs?token=${token}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config.buildInput(keyword || 'clearance', opts)) }
+    );
+    if (!r.ok) {
+      const txt = await r.text();
+      return res.status(r.status).json({ error: `Apify error (${r.status}): ${txt.slice(0, 200)}` });
     }
-    const retailer = obj.retailer || obj.source.replace(/-domgrab$/, '');
-    const result = filterGrabbedProducts(obj.products, maxP);
-    if (!result.products?.length && !result.total) {
-      return res.json({ ...result, retailer, imported: true, message: 'No deals found in the pasted data. Make sure the page finished loading (scroll down once) before clicking the bookmarklet.' });
-    }
-    res.json({ ...result, retailer, imported: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message, message: 'Could not read deals from the pasted data.' });
+    const { data } = await r.json();
+    res.json({ runId: data.id, datasetId: data.defaultDatasetId, status: data.status });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
+app.get('/api/scan/status/:runId', async (req, res) => {
+  const token = getSetting('APIFY_TOKEN');
+  if (!token) return res.status(400).json({ error: 'APIFY_TOKEN not configured' });
+  try {
+    const r = await fetch(`${APIFY_BASE}/actor-runs/${req.params.runId}?token=${token}`);
+    const { data: run } = await r.json();
+    if (run.status === 'SUCCEEDED') {
+      const config = RETAILER_ACTORS[req.query.retailer] || RETAILER_ACTORS.lowes;
+      const ir = await fetch(`${APIFY_BASE}/datasets/${run.defaultDatasetId}/items?token=${token}&limit=1000`);
+      const items = await ir.json();
+      const products = items.map(config.normalize).filter(p => p.name);
+      res.json({ status: 'SUCCEEDED', products, total: items.length });
+    } else if (['FAILED', 'ABORTED', 'TIMED-OUT'].includes(run.status)) {
+      res.json({ status: run.status, error: `Scan ${run.status.toLowerCase()}. Check your Apify console for details.` });
+    } else {
+      res.json({ status: run.status });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ── Browser-extension import buffer ──────────────────────────────────────────
+
+let _pendingImportBuffer = [];
+
+// Chrome extension POSTs scraped products from retailer pages
+app.post('/api/scan/import', (req, res) => {
+  const { retailer = 'browser', products = [] } = req.body;
+  if (!Array.isArray(products) || products.length === 0)
+    return res.status(400).json({ error: 'No products provided' });
+  const seen = new Set(_pendingImportBuffer.map(p => p.id || p.url).filter(Boolean));
+  let added = 0;
+  for (const p of products) {
+    const key = p.id || p.url;
+    if (!key || !seen.has(key)) {
+      _pendingImportBuffer.push({ ...p, _retailer: retailer });
+      if (key) seen.add(key);
+      added++;
+    }
+  }
+  res.json({ ok: true, added, total: _pendingImportBuffer.length });
+});
+
+// Frontend polls this; returns accumulated products and clears the buffer
+app.get('/api/scan/pending', (req, res) => {
+  if (_pendingImportBuffer.length === 0) return res.json({ products: null });
+  const products = [..._pendingImportBuffer];
+  _pendingImportBuffer = [];
+  res.json({ products, count: products.length });
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Resell Tracker v${VERSION} running on port ${PORT}`);
