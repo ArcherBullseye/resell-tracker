@@ -424,6 +424,7 @@ async function saveItem() {
     statusEl.value = 'sold';
   }
 
+  const qty = parseInt(document.getElementById('item-quantity').value) || 1;
   const body = {
     barcode: document.getElementById('lookup-query').value.trim() || null,
     name,
@@ -442,15 +443,15 @@ async function saveItem() {
     ebay_low_price: parseFloat(document.getElementById('ebay-low-val').value) || null,
     ebay_high_price: parseFloat(document.getElementById('ebay-high-val').value) || null,
     status: statusEl.value,
-    quantity: parseInt(document.getElementById('item-quantity').value) || 1
+    quantity: 1
   };
 
   if (id) {
-    await api(`/api/items/${id}`, 'PUT', body);
+    await api(`/api/items/${id}`, 'PUT', { ...body, quantity: qty });
     toast('Item updated', 'success');
   } else {
-    await api('/api/items', 'POST', body);
-    toast('Item added', 'success');
+    for (let i = 0; i < qty; i++) await api('/api/items', 'POST', body);
+    toast(qty > 1 ? `${qty} items added` : 'Item added', 'success');
   }
 
   closeModal();
