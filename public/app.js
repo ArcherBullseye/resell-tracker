@@ -212,7 +212,7 @@ function openModal(mode, id) {
   document.getElementById('modal-title').textContent = mode === 'edit' ? 'Edit Item' : 'Add Item';
   document.getElementById('lookup-section').style.display = mode === 'add' ? 'block' : 'none';
 
-  const deleteBtn = document.getElementById('modal-delete-btn');
+  const deleteBtn = document.getElementById('delete-btn');
   if (mode === 'edit' && id) {
     modalDeleteId = id;
     deleteBtn.style.display = 'inline-flex';
@@ -221,7 +221,6 @@ function openModal(mode, id) {
     modalDeleteId = null;
     deleteBtn.style.display = 'none';
     document.getElementById('buy-date').value = today();
-    document.getElementById('modal-upc-badge').style.display = 'none';
   }
 
   document.getElementById('item-modal').style.display = 'flex';
@@ -229,16 +228,8 @@ function openModal(mode, id) {
 
 async function loadItemIntoForm(id) {
   const item = await api(`/api/items/${id}`);
-  document.getElementById('item-id').value = item.id;
-  document.getElementById('barcode').value = item.barcode || '';
-
-  const upcBadge = document.getElementById('modal-upc-badge');
-  if (item.barcode) {
-    document.getElementById('modal-upc-text').textContent = item.barcode;
-    upcBadge.style.display = 'inline-flex';
-  } else {
-    upcBadge.style.display = 'none';
-  }
+  document.getElementById('edit-item-id').value = item.id;
+  document.getElementById('lookup-query').value = item.barcode || '';
   document.getElementById('item-name').value = item.name || '';
   document.getElementById('item-category').value = item.category || '';
   document.getElementById('item-shelf').value = item.shelf || '';
@@ -250,9 +241,8 @@ async function loadItemIntoForm(id) {
   document.getElementById('sell-price').value = item.sell_price || '';
   document.getElementById('sell-date').value = item.sell_date || '';
   document.getElementById('shipping-cost').value = item.shipping_cost || '';
-  document.getElementById('platform-fee-pct').value = item.platform_fee_pct || 0;
+  document.getElementById('fee-pct').value = item.platform_fee_pct || 0;
   document.getElementById('item-status').value = item.status || 'inventory';
-  document.getElementById('status-select').value = item.status || 'inventory';
 
   if (item.selling_platform) {
     document.getElementById('selling-platform').value = item.selling_platform;
@@ -283,27 +273,37 @@ function closeOnBackdrop(e) {
 }
 
 function clearForm() {
-  ['barcode','item-name','item-category','item-shelf','item-image','item-notes',
-   'buy-price','buy-date','sell-price','sell-date','shipping-cost',
-   'item-id','ebay-avg-val','ebay-low-val','ebay-high-val','search-name',
-   'item-quantity'].forEach(id => {
+  ['lookup-query','item-name','item-category','item-shelf','item-image','item-notes',
+   'buy-price','buy-date','buy-store','sell-price','sell-date','shipping-cost',
+   'edit-item-id','ebay-avg-val','ebay-low-val','ebay-high-val'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
-  document.getElementById('platform-fee-pct').value = 0;
-  document.getElementById('item-status').value = 'inventory';
-  document.getElementById('status-select').value = 'inventory';
-  document.getElementById('item-quantity').value = 1;
-  document.getElementById('selling-platform').value = '';
-  document.getElementById('ebay-section').style.display = 'none';
+  const fp = document.getElementById('fee-pct'); if (fp) fp.value = 0;
+  const ist = document.getElementById('item-status'); if (ist) ist.value = 'inventory';
+  const iqt = document.getElementById('item-quantity'); if (iqt) iqt.value = 1;
+  const spf = document.getElementById('selling-platform'); if (spf) spf.value = '';
+  const lr = document.getElementById('lookup-result'); if (lr) { lr.innerHTML = ''; lr.style.display = 'none'; }
   document.getElementById('profit-preview').style.display = 'none';
-  document.getElementById('image-preview').innerHTML = '<span>No image</span>';
+  document.getElementById('image-preview').innerHTML = '';
 }
 
 // ── Lookup ────────────────────────────────────────────────────────────────────
 
+async function lookupProduct() {
+  const query = document.getElementById('lookup-query').value.trim();
+  if (!query) return toast('Enter a barcode or search term first', 'error');
+  if (/^\d{8,14}$/.test(query)) {
+    await lookupBarcode();
+  } else {
+    await lookupEbayByQuery(query);
+  }
+}
+
+function deleteItem() { modalDelete(); }
+
 async function lookupBarcode() {
-  const upc = document.getElementById('barcode').value.trim();
+  const upc = document.getElementById('lookup-query').value.trim();
   if (!upc) return toast('Enter a barcode first', 'error');
 
   toast('Looking up barcode…');
@@ -318,14 +318,14 @@ async function lookupBarcode() {
     previewImage(data.image_url);
   }
 
-  toast('Product found! Check eBay prices below.', 'success');
+  toast('Product found! Fetching eBay prices…', 'success');
 
   // Auto-trigger eBay lookup
   if (data.name) lookupEbayByQuery(data.name);
 }
 
 async function lookupEbayByName() {
-  const name = document.getElementById('search-name').value.trim()
+  const name = document.getElementById('lookup-query').value.trim()
     || document.getElementById('item-name').value.trim();
   if (!name) return toast('Enter a product name first', 'error');
   lookupEbayByQuery(name);
@@ -346,20 +346,27 @@ async function lookupEbayByQuery(query) {
 }
 
 function showEbayData(data) {
-  document.getElementById('ebay-low').textContent = fmt(data.low);
-  document.getElementById('ebay-avg').textContent = fmt(data.avg);
-  document.getElementById('ebay-high').textContent = fmt(data.high);
-  document.getElementById('ebay-count').textContent = `Based on ${data.count} recent sold listings`;
-  document.getElementById('ebay-section').style.display = 'block';
+  const rows = (data.recentSales || []).slice(0, 5).map(s => `
+    <div class="recent-sale-row">
+      <span class="sale-title" title="${esc(s.title)}">${esc(s.title)}</span>
+      <span class="sale-price">${fmt(s.price)}</span>
+      ${s.itemUrl ? `<a href="${esc(s.itemUrl)}" target="_blank" rel="noopener">View ↗</a>` : ''}
+    </div>`).join('');
 
-  if (data.recentSales && data.recentSales.length > 0) {
-    document.getElementById('recent-sales').innerHTML = data.recentSales.map(s => `
-      <div class="recent-sale-row">
-        <span class="sale-title" title="${esc(s.title)}">${esc(s.title)}</span>
-        <span class="sale-price">${fmt(s.price)}</span>
-        ${s.itemUrl ? `<a href="${esc(s.itemUrl)}" target="_blank">View ↗</a>` : ''}
-      </div>`).join('');
-  }
+  const countLine = data.count && data.count !== '(cached)'
+    ? `<div class="ebay-count">Based on ${data.count} recent sold listings</div>`
+    : data.count === '(cached)' ? `<div class="ebay-count">(cached eBay data)</div>` : '';
+
+  const lr = document.getElementById('lookup-result');
+  lr.innerHTML = `
+    <div class="ebay-prices">
+      <div class="price-badge low">Low <span>${fmt(data.low)}</span></div>
+      <div class="price-badge avg">Avg <span>${fmt(data.avg)}</span></div>
+      <div class="price-badge high">High <span>${fmt(data.high)}</span></div>
+    </div>
+    ${countLine}
+    <div class="recent-sales">${rows}</div>`;
+  lr.style.display = 'block';
 }
 
 // ── Platform fee / profit preview ─────────────────────────────────────────────
@@ -368,7 +375,7 @@ function updatePlatformFee() {
   const sel = document.getElementById('selling-platform');
   const platform = sel.value;
   const fee = PLATFORM_FEES[platform] || 0;
-  document.getElementById('platform-fee-pct').value = fee;
+  document.getElementById('fee-pct').value = fee;
   updateProfitPreview();
 }
 
@@ -376,7 +383,7 @@ function updateProfitPreview() {
   const sell = parseFloat(document.getElementById('sell-price').value) || 0;
   const buy = parseFloat(document.getElementById('buy-price').value) || 0;
   const ship = parseFloat(document.getElementById('shipping-cost').value) || 0;
-  const feePct = parseFloat(document.getElementById('platform-fee-pct').value) || 0;
+  const feePct = parseFloat(document.getElementById('fee-pct').value) || 0;
   const fee = sell * feePct / 100;
   const profit = sell - buy - ship - fee;
 
@@ -410,16 +417,15 @@ async function saveItem() {
   const name = document.getElementById('item-name').value.trim();
   if (!name) return toast('Product name is required', 'error');
 
-  const id = document.getElementById('item-id').value;
+  const id = document.getElementById('edit-item-id').value;
   const sellPrice = parseFloat(document.getElementById('sell-price').value) || null;
   const statusEl = document.getElementById('item-status');
   if (sellPrice && statusEl.value === 'inventory') {
     statusEl.value = 'sold';
-    document.getElementById('status-select').value = 'sold';
   }
 
   const body = {
-    barcode: document.getElementById('barcode').value.trim() || null,
+    barcode: document.getElementById('lookup-query').value.trim() || null,
     name,
     category: document.getElementById('item-category').value.trim() || null,
     shelf: document.getElementById('item-shelf').value.trim() || null,
@@ -431,11 +437,11 @@ async function saveItem() {
     sell_date: document.getElementById('sell-date').value || null,
     shipping_cost: parseFloat(document.getElementById('shipping-cost').value) || 0,
     selling_platform: document.getElementById('selling-platform').value || null,
-    platform_fee_pct: parseFloat(document.getElementById('platform-fee-pct').value) || 0,
+    platform_fee_pct: parseFloat(document.getElementById('fee-pct').value) || 0,
     ebay_avg_price: parseFloat(document.getElementById('ebay-avg-val').value) || null,
     ebay_low_price: parseFloat(document.getElementById('ebay-low-val').value) || null,
     ebay_high_price: parseFloat(document.getElementById('ebay-high-val').value) || null,
-    status: document.getElementById('item-status').value,
+    status: statusEl.value,
     quantity: parseInt(document.getElementById('item-quantity').value) || 1
   };
 
