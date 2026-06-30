@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.3.2';
+const VERSION = '1.3.3';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -112,6 +112,29 @@ function runMigrations() {
 }
 
 runMigrations();
+
+// ── Daily backups ─────────────────────────────────────────────────────────────
+
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const BACKUP_KEEP = 14;
+
+async function doBackup() {
+  if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const filename = `resell-${new Date().toISOString().slice(0, 10)}.db`;
+  try {
+    await db.backup(path.join(BACKUP_DIR, filename));
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.startsWith('resell-') && f.endsWith('.db'))
+      .sort();
+    while (files.length > BACKUP_KEEP) fs.unlinkSync(path.join(BACKUP_DIR, files.shift()));
+    console.log(`Backup saved: ${filename}`);
+  } catch (e) {
+    console.error('Backup failed:', e.message);
+  }
+}
+
+doBackup();
+setInterval(doBackup, 24 * 60 * 60 * 1000);
 
 // DB setting takes priority over env var, env var is the fallback.
 function getSetting(key) {
@@ -632,6 +655,19 @@ app.post('/api/scan/import', (req, res) => {
     }
   }
   res.json({ ok: true, added, total: _pendingImportBuffer.length });
+});
+
+app.get('/api/backup/download', async (req, res) => {
+  if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const tmpPath = path.join(BACKUP_DIR, `download-${Date.now()}.db`);
+  try {
+    await db.backup(tmpPath);
+    res.download(tmpPath, 'resell-backup.db', () => {
+      try { fs.unlinkSync(tmpPath); } catch {}
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Backup failed: ' + e.message });
+  }
 });
 
 // Frontend polls this; returns accumulated products and clears the buffer
