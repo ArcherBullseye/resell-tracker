@@ -6,7 +6,7 @@ let searchDebounce = null;
 let lastSearchLookup = null;
 
 const PLATFORM_FEES = {
-  'eBay': 13.25, 'Mercari': 3, 'Facebook Marketplace': 0,
+  'eBay': 13.6, 'Mercari': 3, 'Facebook Marketplace': 0,
   'OfferUp': 12.9, 'Poshmark': 20, 'Depop': 3, 'Etsy': 6.5,
   'Amazon': 15, 'Craigslist': 0, 'Local Sale': 0, 'Other': 0
 };

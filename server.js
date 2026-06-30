@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.3.5';
+const VERSION = '1.3.6';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -361,12 +361,11 @@ app.get('/api/stats', (req, res) => {
   const totalFees     = db.prepare(
     "SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100 * COALESCE(quantity_sold,1)), 0) as s FROM items WHERE quantity_sold > 0"
   ).get().s;
-  const costOfSold = db.prepare("SELECT COALESCE(SUM(buy_price * COALESCE(quantity_sold,1)),0) as s FROM items WHERE quantity_sold > 0").get().s;
   const totalExpenses = db.prepare('SELECT COALESCE(SUM(amount),0) as s FROM expenses').get().s;
 
   res.json({
     total, inventory, sold, inventoryValue, totalInvested, totalRevenue,
-    netProfit: totalRevenue - costOfSold - totalShipping - totalFees - totalExpenses,
+    netProfit: totalRevenue - totalInvested - totalExpenses,
     totalShipping, totalFees, totalExpenses
   });
 });
