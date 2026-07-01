@@ -72,6 +72,8 @@
       <button class="tab active" data-tab="all" onclick="switchTab(this,'all')">All Items</button>
       <button class="tab" data-tab="inventory" onclick="switchTab(this,'inventory')">Inventory</button>
       <button class="tab" data-tab="sold" onclick="switchTab(this,'sold')">Sold</button>
+      <button class="tab" data-tab="attention" onclick="switchTab(this,'attention')">&#9888; Needs Attention<span id="attention-badge" class="tab-badge" style="display:none">0</span></button>
+      <button class="tab" data-tab="analytics" onclick="switchTab(this,'analytics')">&#128202; Analytics</button>
     </div>
 
     <!-- Items Grid -->
@@ -82,6 +84,20 @@
         <p>No items yet. Click <strong>+ Add Item</strong> to get started.</p>
       </div>
     </main>
+
+    <!-- Analytics Panel -->
+    <section id="analytics-panel" class="analytics-panel" style="display:none">
+      <div class="analytics-grid">
+        <div class="analytics-section">
+          <h3 class="analytics-heading">By Category</h3>
+          <div id="category-table"><p class="analytics-empty">Loading&hellip;</p></div>
+        </div>
+        <div class="analytics-section">
+          <h3 class="analytics-heading">By Platform</h3>
+          <div id="platform-table"><p class="analytics-empty">Loading&hellip;</p></div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- ── Deals Scanner Modal ─────────────────────────────────────────────── -->

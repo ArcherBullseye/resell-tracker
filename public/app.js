@@ -46,6 +46,13 @@ async function loadStats() {
   const profitEl = document.getElementById('stat-profit');
   profitEl.textContent = fmt(stats.netProfit);
   profitEl.className = 'stat-value ' + (stats.netProfit >= 0 ? 'profit-pos' : 'profit-neg');
+  const badge = document.getElementById('attention-badge');
+  if (stats.agingCount > 0) {
+    badge.textContent = stats.agingCount;
+    badge.style.display = 'inline-flex';
+  } else {
+    badge.style.display = 'none';
+  }
 }
 
 // ── Items ─────────────────────────────────────────────────────────────────────
@@ -202,8 +209,84 @@ async function fetchEbayLivePrices(items) {
 function switchTab(el, tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  loadItems(tab);
+  const analyticsPanel = document.getElementById('analytics-panel');
+  const itemsContainer = document.querySelector('.items-container');
+  if (tab === 'analytics') {
+    itemsContainer.style.display = 'none';
+    analyticsPanel.style.display = 'block';
+    loadAnalytics();
+  } else {
+    analyticsPanel.style.display = 'none';
+    itemsContainer.style.display = '';
+    if (tab === 'attention') {
+      loadAttentionItems();
+    } else {
+      loadItems(tab);
+    }
+  }
 }
+
+async function loadAttentionItems() {
+  currentTab = 'attention';
+  const items = await api('/api/items?status=inventory');
+  const now = new Date();
+  const aging = items.filter(item => {
+    if (!item.buy_date) return false;
+    return Math.round((now - new Date(item.buy_date)) / 86400000) >= 45;
+  });
+  const grid = document.getElementById('items-grid');
+  const empty = document.getElementById('empty-state');
+  if (aging.length === 0) {
+    grid.innerHTML = '';
+    empty.querySelector('p').innerHTML = 'All clear — no items have been sitting for 45+ days.';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.innerHTML = aging.map(renderCard).join('');
+}
+
+async function loadAnalytics() {
+  const data = await api('/api/analytics');
+  const maxCatRev = Math.max(...data.categories.map(r => r.revenue), 0);
+  const maxPlatRev = Math.max(...data.platforms.map(r => r.revenue), 0);
+
+  document.getElementById('category-table').innerHTML = data.categories.length
+    ? buildBreakdownTable(
+        ['Category', '', 'Items', 'Sold', 'Revenue', 'Avg ROI', 'Avg Days'],
+        data.categories.map(r => [
+          `<td class="bd-name">${esc(r.category)}</td>`,
+          `<td class="bd-bar-cell"><div class="bar-track"><div class="bar-fill" style="width:${pct(r.revenue,maxCatRev)}%"></div></div></td>`,
+          `<td>${r.total_items}</td>`,
+          `<td>${r.sold_count}</td>`,
+          `<td>${fmt(r.revenue)}</td>`,
+          `<td class="${r.avg_roi >= 0 ? 'bd-roi-pos' : 'bd-roi-neg'}">${r.avg_roi.toFixed(0)}%</td>`,
+          `<td>${r.avg_days > 0 ? Math.round(r.avg_days) + 'd' : '—'}</td>`,
+        ])
+      )
+    : '<p class="analytics-empty">No category data yet.</p>';
+
+  document.getElementById('platform-table').innerHTML = data.platforms.length
+    ? buildBreakdownTable(
+        ['Platform', '', 'Sold', 'Revenue', 'Avg ROI'],
+        data.platforms.map(r => [
+          `<td class="bd-name">${esc(r.platform)}</td>`,
+          `<td class="bd-bar-cell"><div class="bar-track"><div class="bar-fill bar-green" style="width:${pct(r.revenue,maxPlatRev)}%"></div></div></td>`,
+          `<td>${r.sold_count}</td>`,
+          `<td>${fmt(r.revenue)}</td>`,
+          `<td class="${r.avg_roi >= 0 ? 'bd-roi-pos' : 'bd-roi-neg'}">${r.avg_roi.toFixed(0)}%</td>`,
+        ])
+      )
+    : '<p class="analytics-empty">No platform data yet.</p>';
+}
+
+function buildBreakdownTable(headers, rows) {
+  const ths = headers.map(h => `<th>${h}</th>`).join('');
+  const trs = rows.map(cells => `<tr>${cells.join('')}</tr>`).join('');
+  return `<table class="breakdown-table"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+}
+
+function pct(val, max) { return max > 0 ? Math.round((val / max) * 100) : 0; }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
 

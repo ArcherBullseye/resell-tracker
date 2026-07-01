@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.3.6';
+const VERSION = '1.3.7';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -362,12 +362,50 @@ app.get('/api/stats', (req, res) => {
     "SELECT COALESCE(SUM(sell_price * platform_fee_pct / 100 * COALESCE(quantity_sold,1)), 0) as s FROM items WHERE quantity_sold > 0"
   ).get().s;
   const totalExpenses = db.prepare('SELECT COALESCE(SUM(amount),0) as s FROM expenses').get().s;
+  const agingCount   = db.prepare(
+    "SELECT COUNT(*) as c FROM items WHERE status='inventory' AND buy_date IS NOT NULL AND julianday('now') - julianday(buy_date) >= 45"
+  ).get().c;
 
   res.json({
     total, inventory, sold, inventoryValue, totalInvested, totalRevenue,
     netProfit: totalRevenue - totalInvested - totalExpenses,
-    totalShipping, totalFees, totalExpenses
+    totalShipping, totalFees, totalExpenses, agingCount
   });
+});
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
+app.get('/api/analytics', (req, res) => {
+  const categories = db.prepare(`
+    SELECT
+      COALESCE(NULLIF(TRIM(category),''), 'Uncategorized') as category,
+      COUNT(*) as total_items,
+      SUM(CASE WHEN status='sold' THEN 1 ELSE 0 END) as sold_count,
+      COALESCE(SUM(CASE WHEN status='sold' THEN sell_price ELSE 0 END), 0) as revenue,
+      COALESCE(SUM(buy_price), 0) as invested,
+      COALESCE(AVG(CASE WHEN status='sold' AND buy_price > 0
+        THEN (sell_price - buy_price) / buy_price * 100.0 END), 0) as avg_roi,
+      COALESCE(AVG(CASE WHEN status='sold' AND sell_date IS NOT NULL AND buy_date IS NOT NULL
+        THEN julianday(sell_date) - julianday(buy_date) END), 0) as avg_days
+    FROM items
+    GROUP BY COALESCE(NULLIF(TRIM(category),''), 'Uncategorized')
+    ORDER BY revenue DESC
+  `).all();
+
+  const platforms = db.prepare(`
+    SELECT
+      selling_platform as platform,
+      COUNT(*) as sold_count,
+      COALESCE(SUM(sell_price), 0) as revenue,
+      COALESCE(AVG(CASE WHEN buy_price > 0
+        THEN (sell_price - buy_price - COALESCE(shipping_cost,0) - sell_price * platform_fee_pct / 100.0) / buy_price * 100.0 END), 0) as avg_roi
+    FROM items
+    WHERE status='sold' AND selling_platform IS NOT NULL AND TRIM(selling_platform) != ''
+    GROUP BY selling_platform
+    ORDER BY revenue DESC
+  `).all();
+
+  res.json({ categories, platforms });
 });
 
 // ── Expenses ───────────────────────────────────────────────────────────────────
