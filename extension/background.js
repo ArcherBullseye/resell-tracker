@@ -1,27 +1,44 @@
-const DEFAULT_UMBREL_URL = 'http://umbrel.local:3001';
+async function getBuffer() {
+  const { scanBuffer = [] } = await chrome.storage.local.get('scanBuffer');
+  return scanBuffer;
+}
 
-async function getUmbrelUrl() {
-  const { umbrelUrl } = await chrome.storage.local.get('umbrelUrl');
-  return (umbrelUrl || DEFAULT_UMBREL_URL).replace(/\/$/, '');
+async function addToBuffer(products, retailer) {
+  const current = await getBuffer();
+  const seen = new Set(current.map(p => p.url).filter(Boolean));
+  const tagged = products.map(p => ({ ...p, _retailer: retailer }));
+  const fresh = tagged.filter(p => !p.url || !seen.has(p.url));
+  const buffer = [...current, ...fresh];
+  await chrome.storage.local.set({ scanBuffer: buffer });
+  return { ok: true, added: fresh.length, total: buffer.length };
+}
+
+async function downloadAndClear() {
+  const buffer = await getBuffer();
+  if (!buffer.length) return { ok: false, error: 'Nothing buffered yet' };
+  const payload = JSON.stringify({ products: buffer, scanned_at: new Date().toISOString() }, null, 2);
+  const dataUrl = 'data:application/json;charset=utf-8,' + encodeURIComponent(payload);
+  const filename = `resell-scan-${new Date().toISOString().slice(0, 10)}.json`;
+  await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+  await chrome.storage.local.set({ scanBuffer: [] });
+  return { ok: true, count: buffer.length };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'SEND_PRODUCTS') {
-    handleSend(msg).then(sendResponse).catch(e => sendResponse({ ok: false, error: e.message }));
-    return true; // async response
+    addToBuffer(msg.products, msg.retailer).then(sendResponse).catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg.type === 'GET_COUNT') {
+    getBuffer().then(buf => sendResponse({ count: buf.length })).catch(() => sendResponse({ count: 0 }));
+    return true;
+  }
+  if (msg.type === 'DOWNLOAD_AND_CLEAR') {
+    downloadAndClear().then(sendResponse).catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+  if (msg.type === 'CLEAR_BUFFER') {
+    chrome.storage.local.set({ scanBuffer: [] }).then(() => sendResponse({ ok: true }));
+    return true;
   }
 });
-
-async function handleSend({ products, retailer }) {
-  const base = await getUmbrelUrl();
-  const response = await fetch(`${base}/api/scan/import`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ retailer, products }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Server error ${response.status}: ${text.slice(0, 120)}`);
-  }
-  return response.json();
-}

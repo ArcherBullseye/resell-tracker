@@ -1,17 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Resell Tracker Scanner",
-  "version": "1.0.0",
-  "description": "1-click product import from Lowe's and Tractor Supply clearance pages into your Resell Tracker.",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "version": "1.1.0",
+  "description": "Scan retailer clearance pages — buffer across multiple sites, then download one file to upload into Resell Tracker.",
+  "permissions": ["activeTab", "scripting", "downloads", "storage"],
   "host_permissions": [
     "https://*.lowes.com/*",
     "https://*.tractorsupply.com/*",
     "https://*.homedepot.com/*",
-    "https://*.walmart.com/*",
-    "http://umbrel.local:3001/*",
-    "http://192.168.*.*:3001/*",
-    "http://10.*.*.*:3001/*"
+    "https://*.walmart.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

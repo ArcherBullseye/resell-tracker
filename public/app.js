@@ -632,14 +632,12 @@ async function confirmDelete() {
 async function openScanner() {
   document.getElementById('scanner-panel').style.display = 'flex';
   document.body.style.overflow = 'hidden';
-  startBrowserImportPolling();
 }
 
 function closeScanner() {
   document.getElementById('scanner-panel').style.display = 'none';
   document.body.style.overflow = '';
   if (_scanPollInterval) { clearInterval(_scanPollInterval); _scanPollInterval = null; }
-  stopBrowserImportPolling();
 }
 
 function scannerCloseOnBackdrop(e) {
@@ -650,61 +648,30 @@ let _currentRetailer = 'lowes';
 let _scanPollInterval = null;
 let _importedDeals = [];
 
-// ── Browser-extension import polling ─────────────────────────────────────────
+// ── Browser-extension file upload ─────────────────────────────────────────────
 
-let _browserImportInterval = null;
-let _browserPendingProducts = null;
-
-async function checkBrowserImport() {
+async function uploadScanFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('scan-upload-status');
+  statusEl.textContent = 'Reading file…';
   try {
-    const data = await api('/api/scan/pending');
-    if (data && Array.isArray(data.products) && data.products.length > 0) {
-      _browserPendingProducts = data.products;
-      const countEl = document.getElementById('browser-import-count');
-      if (countEl) countEl.textContent = `${data.products.length} product${data.products.length === 1 ? '' : 's'}`;
-      document.getElementById('browser-import-waiting').style.display = 'none';
-      document.getElementById('browser-import-ready').style.display = 'block';
-    }
-  } catch { /* network glitch */ }
-}
-
-function loadBrowserImport() {
-  if (!_browserPendingProducts || _browserPendingProducts.length === 0) return;
-  _importedDeals = _browserPendingProducts;
-  _browserPendingProducts = null;
-  document.getElementById('browser-import-ready').style.display = 'none';
-  document.getElementById('browser-import-waiting').style.display = 'block';
-  const statusEl = document.getElementById('scanner-status');
-  const emptyEl  = document.getElementById('scanner-empty-state');
-  if (emptyEl) emptyEl.style.display = 'none';
-  const count = _importedDeals.length;
-  statusEl.innerHTML = `<div class="scanner-count"><strong>${count}</strong> product${count === 1 ? '' : 's'} from browser. <button class="btn btn-primary btn-xs" id="ebay-compare-btn" onclick="compareAllToEbay()">&#128176; Compare all to eBay</button></div>`;
-  renderDealGrid();
-}
-
-function dismissBrowserImport() {
-  _browserPendingProducts = null;
-  document.getElementById('browser-import-ready').style.display = 'none';
-  document.getElementById('browser-import-waiting').style.display = 'block';
-}
-
-function startBrowserImportPolling() {
-  document.getElementById('browser-import-waiting').style.display = 'block';
-  document.getElementById('browser-import-ready').style.display = 'none';
-  checkBrowserImport();
-  _browserImportInterval = setInterval(checkBrowserImport, 8000);
-  document.addEventListener('visibilitychange', onVisibilityChange);
-}
-
-function stopBrowserImportPolling() {
-  if (_browserImportInterval) { clearInterval(_browserImportInterval); _browserImportInterval = null; }
-  document.removeEventListener('visibilitychange', onVisibilityChange);
-  document.getElementById('browser-import-waiting').style.display = 'none';
-  document.getElementById('browser-import-ready').style.display = 'none';
-}
-
-function onVisibilityChange() {
-  if (!document.hidden) checkBrowserImport();
+    const data = JSON.parse(await file.text());
+    const products = data.products || [];
+    if (!products.length) { statusEl.textContent = 'No products found in file.'; return; }
+    _importedDeals = products;
+    const retailers = [...new Set(products.map(p => p._retailer).filter(Boolean))];
+    const label = retailers.length > 1 ? retailers.join(', ') : (retailers[0] || data.retailer || 'scan');
+    const emptyEl = document.getElementById('scanner-empty-state');
+    if (emptyEl) emptyEl.style.display = 'none';
+    document.getElementById('scanner-status').innerHTML =
+      `<div class="scanner-count">Loaded <strong>${products.length}</strong> products from ${label}. <button class="btn btn-primary btn-xs" id="ebay-compare-btn" onclick="compareAllToEbay()">&#128176; Compare all to eBay</button></div>`;
+    renderDealGrid();
+    statusEl.textContent = '';
+    input.value = '';
+  } catch (e) {
+    statusEl.textContent = 'Error reading file: ' + e.message;
+  }
 }
 
 function selectApifyRetailer(retailer) {

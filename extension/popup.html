@@ -31,6 +31,30 @@
     }
     .site-badge.unsupported { background: #555; }
     .body { padding: 12px 14px; }
+    .buffer-bar {
+      background: #12122a;
+      border: 1px solid #2d2d4e;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 11px;
+      color: #a0a8c0;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .buffer-count { font-weight: 600; color: #e0e0e0; }
+    .btn-clear {
+      font-size: 10px;
+      color: #888;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+    }
+    .btn-clear:hover { color: #f08080; }
     .scan-btn {
       width: 100%;
       padding: 10px;
@@ -41,10 +65,24 @@
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
     .scan-btn:disabled { background: #444; cursor: default; }
     .scan-btn:hover:not(:disabled) { background: #339966; }
+    .download-btn {
+      width: 100%;
+      padding: 8px;
+      background: #2d4070;
+      color: #e0e0e0;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    .download-btn:disabled { background: #1e2a3a; color: #555; cursor: default; }
+    .download-btn:hover:not(:disabled) { background: #3a52a0; }
     .status {
       font-size: 12px;
       min-height: 36px;
@@ -57,37 +95,7 @@
     .status.ok    { color: #4caf80; }
     .status.err   { color: #f08080; }
     .status.info  { color: #a0a8c0; }
-    .divider {
-      border: none;
-      border-top: 1px solid #2d2d4e;
-      margin: 10px 0;
-    }
-    .settings-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .settings-row label { font-size: 11px; color: #888; white-space: nowrap; }
-    .settings-row input {
-      flex: 1;
-      background: #12122a;
-      border: 1px solid #333;
-      border-radius: 4px;
-      color: #e0e0e0;
-      padding: 4px 6px;
-      font-size: 11px;
-    }
-    .save-btn {
-      padding: 4px 8px;
-      background: #2d4070;
-      color: #e0e0e0;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 11px;
-    }
-    .save-btn:hover { background: #3a52a0; }
-    .hint { font-size: 10px; color: #666; margin-top: 8px; line-height: 1.4; }
+    .hint { font-size: 10px; color: #666; margin-top: 4px; line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -97,15 +105,14 @@
     <span class="site-badge unsupported" id="site-badge">Loading…</span>
   </div>
   <div class="body">
-    <button class="scan-btn" id="scan-btn" disabled>&#9654; Scan &amp; Send</button>
-    <div class="status info" id="status">Detecting page…</div>
-    <hr class="divider" />
-    <div class="settings-row">
-      <label>Umbrel URL</label>
-      <input type="text" id="umbrel-url" placeholder="http://umbrel.local:3000" />
-      <button class="save-btn" id="save-btn">Save</button>
+    <div class="buffer-bar">
+      <span id="buffer-count" class="buffer-count">Buffer empty</span>
+      <button class="btn-clear" id="clear-btn" style="display:none">Clear</button>
     </div>
-    <div class="hint">Open your Resell Tracker scanner tab before clicking Scan &amp; Send — products appear there automatically.</div>
+    <button class="scan-btn" id="scan-btn" disabled>&#9654; Scan This Page</button>
+    <button class="download-btn" id="download-btn" disabled>&#11015; Download File</button>
+    <div class="status info" id="status">Detecting page…</div>
+    <div class="hint">Scan multiple pages across different sites — all products accumulate in the buffer. When ready, click Download and upload the file in Resell Tracker &rarr; Scanner.</div>
   </div>
   <script src="popup.js"></script>
 </body>
