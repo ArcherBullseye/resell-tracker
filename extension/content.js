@@ -8,25 +8,64 @@ function getRetailer() {
 }
 
 // ── Lowe's extraction ─────────────────────────────────────────────────────────
+// Link-first approach: find all /pd/ product links, walk up to the card root.
+// More reliable than class-name selectors on React pages with hashed styles.
 function extractLowes() {
-  const cards = findCards([
+  const seen = new Set();
+  const results = [];
+
+  // Try class-based first (fast path)
+  const classCards = findCards([
     '[class*="ProductCard"]',
-    '[data-testid*="product"]',
     'ol[class*="plp"] > li',
     'ul[class*="plp"] > li',
     '[class*="grid"] > li',
     '[class*="grid"] > article',
     'article[data-testid]',
+    'li[data-product-id]',
+    'li[data-item-id]',
   ]);
-  return cards.map(card => {
-    const link  = card.querySelector('a[href*="/pd/"], a[href*="/p/"]') || card.querySelector('a');
-    const title = textOf(card, ['[class*="description"]', '[class*="title"]', '[class*="name"]', 'h2', 'h3']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
-    const url   = link ? new URL(link.href, location.origin).href : null;
-    if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
-  }).filter(Boolean);
+  for (const card of classCards) {
+    const link = card.querySelector('a[href*="/pd/"], a[href*="/p/"]') || card.querySelector('a');
+    const url  = link ? safeUrl(link.href) : null;
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const title = textOf(card, ['[data-testid*="name"]','[data-testid*="title"]','[class*="description"]','[class*="title"]','[class*="name"]','h2','h3','h4']);
+    if (!title) continue;
+    results.push({ id: null, name: title, now_price: priceOf(card), was_price: null, url, image: imgOf(card) });
+  }
+  if (results.length >= 2) return results;
+
+  // Fallback: link-first — walk up from every /pd/ link to find the card container
+  for (const a of document.querySelectorAll('a[href*="/pd/"], a[href*="/pd.html"]')) {
+    const url = safeUrl(a.href);
+    if (!url || seen.has(url)) continue;
+    const card = cardAncestor(a);
+    if (!card) continue;
+    const title = textOf(card, ['h2','h3','h4','[class*="title"]','[class*="name"]','[class*="desc"]']) || a.textContent.trim();
+    if (!title || title.length < 3) continue;
+    seen.add(url);
+    results.push({ id: null, name: title, now_price: priceOf(card), was_price: null, url, image: imgOf(card) });
+  }
+  return results;
+}
+
+function cardAncestor(el) {
+  let node = el.parentElement;
+  for (let i = 0; i < 8 && node; i++) {
+    // Stop when the container has both an image and a price-like element
+    if (node.querySelector('img') && (priceOf(node) || node.querySelector('[class*="price"],[class*="Price"]'))) return node;
+    node = node.parentElement;
+  }
+  return el.closest('li, article') || el.parentElement;
+}
+
+function safeUrl(href) {
+  try { return new URL(href, location.origin).href; } catch { return null; }
+}
+
+function imgOf(container) {
+  return (container.querySelector('img') || {}).src || null;
 }
 
 // ── Tractor Supply extraction ─────────────────────────────────────────────────
@@ -41,12 +80,10 @@ function extractTSC() {
   ]);
   return cards.map(card => {
     const link  = card.querySelector('a[href*="/p/"], a[href*="/pd/"]') || card.querySelector('a');
+    const url   = link ? safeUrl(link.href) : null;
     const title = textOf(card, ['[class*="product-name"]', '[class*="title"]', 'h2', 'h3']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
-    const url   = link ? new URL(link.href, location.origin).href : null;
     if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: imgOf(card) };
   }).filter(Boolean);
 }
 
@@ -61,12 +98,10 @@ function extractWalmart() {
   ]);
   return cards.map(card => {
     const link  = card.querySelector('a[href*="/ip/"]') || card.querySelector('a');
+    const url   = link ? safeUrl(link.href) : null;
     const title = textOf(card, ['[class*="product-title"]', '[data-automation-id="product-title"]', 'span[class*="line-clamp"]', 'h2', 'h3']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
-    const url   = link ? new URL(link.href, location.origin).href : null;
     if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: imgOf(card) };
   }).filter(Boolean);
 }
 
@@ -80,12 +115,10 @@ function extractHomeDepot() {
   ]);
   return cards.map(card => {
     const link  = card.querySelector('a[href*="/p/"]') || card.querySelector('a');
+    const url   = link ? safeUrl(link.href) : null;
     const title = textOf(card, ['[class*="product-header"]', 'h2', 'h3', 'span[class*="title"]']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
-    const url   = link ? new URL(link.href, location.origin).href : null;
     if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: imgOf(card) };
   }).filter(Boolean);
 }
 
@@ -248,15 +281,23 @@ function extractProducts() {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function doScanStep(retailer) {
-  const { products } = extractProducts();
+  let { products } = extractProducts();
+
+  // If nothing found yet, wait and retry once — JS-heavy pages need extra time
+  if (products.length === 0) {
+    await sleep(2500);
+    ({ products } = extractProducts());
+  }
+
   if (products.length > 0) {
     await new Promise(resolve =>
       chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, resolve)
     );
   }
+
   const next = findNextPageUrl();
   if (next) {
-    await sleep(400);
+    await sleep(500);
     window.location.href = next;
   } else {
     await chrome.storage.local.set({ autoScanning: false });
@@ -270,7 +311,7 @@ async function doScanStep(retailer) {
   if (!autoScanning) return;
   const retailer = getRetailer();
   if (retailer === 'unknown') return;
-  await sleep(2500); // wait for JS-rendered product cards
+  await sleep(3500); // wait for JS-rendered product cards
   await doScanStep(retailer);
 })();
 
