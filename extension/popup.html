@@ -42,33 +42,39 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 6px;
     }
     .buffer-count { font-weight: 600; color: #e0e0e0; }
-    .btn-clear {
-      font-size: 10px;
-      color: #888;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 0;
-      text-decoration: underline;
-    }
+    .btn-clear { font-size: 10px; color: #888; background: none; border: none; cursor: pointer; padding: 0; text-decoration: underline; }
     .btn-clear:hover { color: #f08080; }
+    .btn-row { display: flex; gap: 6px; margin-bottom: 8px; }
     .scan-btn {
-      width: 100%;
-      padding: 10px;
+      flex: 1;
+      padding: 9px 6px;
       background: #2a7a5a;
       color: #fff;
       border: none;
       border-radius: 6px;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       cursor: pointer;
-      margin-bottom: 8px;
     }
-    .scan-btn:disabled { background: #444; cursor: default; }
+    .scan-btn:disabled { background: #333; color: #666; cursor: default; }
     .scan-btn:hover:not(:disabled) { background: #339966; }
+    .auto-btn {
+      flex: 1;
+      padding: 9px 6px;
+      background: #3a2d70;
+      color: #e0e0e0;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .auto-btn:disabled { background: #222; color: #555; cursor: default; }
+    .auto-btn:hover:not(:disabled) { background: #5040a0; }
+    .auto-btn.scanning { background: #1e3a1e; color: #4caf80; animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
     .download-btn {
       width: 100%;
       padding: 8px;
@@ -92,9 +98,9 @@
       margin-bottom: 10px;
       white-space: pre-wrap;
     }
-    .status.ok    { color: #4caf80; }
-    .status.err   { color: #f08080; }
-    .status.info  { color: #a0a8c0; }
+    .status.ok   { color: #4caf80; }
+    .status.err  { color: #f08080; }
+    .status.info { color: #a0a8c0; }
     .hint { font-size: 10px; color: #666; margin-top: 4px; line-height: 1.4; }
   </style>
 </head>
@@ -109,10 +115,13 @@
       <span id="buffer-count" class="buffer-count">Buffer empty</span>
       <button class="btn-clear" id="clear-btn" style="display:none">Clear</button>
     </div>
-    <button class="scan-btn" id="scan-btn" disabled>&#9654; Scan This Page</button>
+    <div class="btn-row">
+      <button class="scan-btn" id="scan-btn" disabled title="Scan only this page">&#9654; This Page</button>
+      <button class="auto-btn" id="auto-btn" disabled title="Follow pagination and scan all pages automatically">&#9889; All Pages</button>
+    </div>
     <button class="download-btn" id="download-btn" disabled>&#11015; Download File</button>
     <div class="status info" id="status">Detecting page…</div>
-    <div class="hint">Scan multiple pages across different sites — all products accumulate in the buffer. When ready, click Download and upload the file in Resell Tracker &rarr; Scanner.</div>
+    <div class="hint">&#9889; All Pages follows pagination automatically across all pages. Download when done, then upload in Resell Tracker &rarr; Scanner.</div>
   </div>
   <script src="popup.js"></script>
 </body>

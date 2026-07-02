@@ -10,6 +10,7 @@ async function addToBuffer(products, retailer) {
   const fresh = tagged.filter(p => !p.url || !seen.has(p.url));
   const buffer = [...current, ...fresh];
   await chrome.storage.local.set({ scanBuffer: buffer });
+  updateBadge(buffer.length, true);
   return { ok: true, added: fresh.length, total: buffer.length };
 }
 
@@ -21,7 +22,13 @@ async function downloadAndClear() {
   const filename = `resell-scan-${new Date().toISOString().slice(0, 10)}.json`;
   await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
   await chrome.storage.local.set({ scanBuffer: [] });
+  updateBadge(0, false);
   return { ok: true, count: buffer.length };
+}
+
+function updateBadge(count, scanning) {
+  chrome.action.setBadgeBackgroundColor({ color: scanning ? '#2a7a5a' : '#2d4070' });
+  chrome.action.setBadgeText({ text: count > 0 ? String(count) : '' });
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -33,12 +40,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     getBuffer().then(buf => sendResponse({ count: buf.length })).catch(() => sendResponse({ count: 0 }));
     return true;
   }
+  if (msg.type === 'AUTO_SCAN_COMPLETE') {
+    getBuffer().then(buf => {
+      updateBadge(buf.length, false);
+      sendResponse({ ok: true, total: buf.length });
+    });
+    return true;
+  }
   if (msg.type === 'DOWNLOAD_AND_CLEAR') {
     downloadAndClear().then(sendResponse).catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
   if (msg.type === 'CLEAR_BUFFER') {
-    chrome.storage.local.set({ scanBuffer: [] }).then(() => sendResponse({ ok: true }));
+    chrome.storage.local.set({ scanBuffer: [], autoScanning: false }).then(() => {
+      updateBadge(0, false);
+      sendResponse({ ok: true });
+    });
     return true;
   }
 });
