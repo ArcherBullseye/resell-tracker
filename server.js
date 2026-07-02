@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const VERSION = '1.3.7';
+const VERSION = '1.3.8';
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -152,6 +152,15 @@ function setSetting(key, value) {
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Allow browser extensions running on retailer sites to reach local API
+app.use('/api', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
