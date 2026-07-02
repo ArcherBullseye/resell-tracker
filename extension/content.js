@@ -7,37 +7,107 @@ function getRetailer() {
   return 'unknown';
 }
 
-// ── JSON-LD parser — proven reliable on Lowe's via bookmarklet tests ──────────
-function extractJsonLd() {
+// ── JSON-LD parser ─────────────────────────────────────────────────────────────
+// Proven by bookmarklet tests (v1.2.14). Works on a live document OR a doc
+// parsed from a fetch() response via DOMParser.
+function extractJsonLdFromDoc(doc) {
   const results = [];
-  document.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
+  doc.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
     try {
       const j = JSON.parse(s.textContent);
       const arr = Array.isArray(j) ? j : (j['@graph'] ? j['@graph'] : [j]);
       arr.forEach(p => {
-        if (!p || p['@type'] !== 'Product') return;
-        const off  = Array.isArray(p.offers) ? p.offers[0] : p.offers;
-        const url  = (off && off.url) || p.url || '';
-        const name = p.name || '';
-        if (!name || !url) return;
-        results.push({
-          id: String(p.sku || ''),
-          name,
-          now_price: (off && off.price != null) ? Number(off.price) : null,
-          was_price: null,
-          url,
-          image: typeof p.image === 'string' ? p.image : (Array.isArray(p.image) ? p.image[0] : ''),
-        });
+        if (!p) return;
+        if (p['@type'] === 'Product') {
+          pushProduct(p, results);
+        } else if (p['@type'] === 'ItemList') {
+          (p.itemListElement || []).forEach(item => {
+            const prod = item.item || item;
+            if (prod && prod['@type'] === 'Product') pushProduct(prod, results);
+          });
+        }
       });
     } catch(e) {}
   });
   return results;
 }
 
-// ── Lowe's: JSON-LD primary (proven by bookmarklet), DOM fallback ─────────────
+function pushProduct(p, results) {
+  const off  = Array.isArray(p.offers) ? p.offers[0] : p.offers;
+  const url  = (off && off.url) || p.url || '';
+  const name = p.name || '';
+  if (!name || !url) return;
+  results.push({
+    id: String(p.sku || ''),
+    name,
+    now_price: (off && off.price != null) ? Number(off.price) : null,
+    was_price: null,
+    url,
+    image: typeof p.image === 'string' ? p.image : (Array.isArray(p.image) ? p.image[0] : ''),
+  });
+}
+
+// Convenience wrapper for the current document
+function extractJsonLd() { return extractJsonLdFromDoc(document); }
+
+// ── Lowe's: JSON-LD from current page (page 1), fetch for subsequent pages ────
+// Lowe's only includes JSON-LD on the server-rendered page 1 response.
+// Navigating to page 2 in the browser strips it (React client-side routing).
+// The bookmarklet worked by fetching each page's HTML with credentials.
+// The extension content script does the same — stays on page 1 and fetches all
+// subsequent pages, parsing JSON-LD from each server-sent HTML response.
+async function extractLowesAllPages(sendProgress) {
+  const seen = new Set();
+  const all  = [];
+
+  function addProducts(prods) {
+    prods.forEach(p => {
+      const key = p.url || p.id;
+      if (key && !seen.has(key)) { seen.add(key); all.push(p); }
+    });
+  }
+
+  // Page 1: already in the DOM
+  addProducts(extractJsonLd());
+  if (all.length === 0) return [];   // Not on a Lowe's listing page
+
+  if (sendProgress) await sendProgress(all.slice(-all.length));
+
+  // Pages 2+: fetch server HTML, parse JSON-LD from each
+  const base = new URL(location.href);
+  const step = parseInt(base.searchParams.get('Nrpp') || '24', 10);
+  let nao = step;
+
+  for (let page = 1; page < 40; page++) {
+    base.searchParams.set('Nao', String(nao));
+    const html = await fetch(base.toString(), { credentials: 'include' })
+      .then(r => r.text())
+      .catch(() => null);
+
+    if (!html || html.length < 1500 || /Access Denied|CAPTCHA/i.test(html)) break;
+
+    const doc   = new DOMParser().parseFromString(html, 'text/html');
+    const prods = extractJsonLdFromDoc(doc);
+    if (prods.length === 0) break;
+
+    const before = all.length;
+    addProducts(prods);
+    const added = all.length - before;
+    if (added === 0) break; // All dupes — ran out of unique products
+
+    if (sendProgress) await sendProgress(all.slice(-added));
+
+    nao += step;
+    await sleep(450); // polite delay
+  }
+
+  return all;
+}
+
 function extractLowes() {
+  // For single-page manual scan — just the current page's JSON-LD, fall to DOM
   const ld = extractJsonLd();
-  if (ld.length > 0) return ld;
+  if (ld.length >= 5) return ld;
 
   const cards = findCards([
     '[class*="ProductCard"]',
@@ -48,41 +118,34 @@ function extractLowes() {
     '[class*="grid"] > article',
     'article[data-testid]',
   ]);
-  return cards.map(card => {
-    const link  = card.querySelector('a[href*="/pd/"], a[href*="/p/"]') || card.querySelector('a');
-    const title = textOf(card, ['[class*="description"]', '[class*="title"]', '[class*="name"]', 'h2', 'h3']);
-    const url   = link ? new URL(link.href, location.origin).href : null;
-    if (!title || !url) return null;
-    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
-  }).filter(Boolean);
+  const dom = cardsToProducts(cards, 'a[href*="/pd/"], a[href*="/p/"]');
+  return dom.length > ld.length ? dom : ld;
 }
 
 // ── Tractor Supply ────────────────────────────────────────────────────────────
 function extractTSC() {
   const ld = extractJsonLd();
-  if (ld.length > 0) return ld;
+  if (ld.length >= 5) return ld;
 
   const cards = findCards([
+    '[class*="product-tile"]',
+    '[class*="ProductTile"]',
     '[class*="product-card"]',
     '[class*="ProductCard"]',
-    '[data-testid*="product"]',
+    '[class*="tile-body"]',
     '[class*="plp-item"]',
-    '.grid-item',
+    '.product-item',
     'li[class*="item"]',
+    '[data-testid*="product"]',
   ]);
-  return cards.map(card => {
-    const link  = card.querySelector('a[href*="/p/"], a[href*="/pd/"]') || card.querySelector('a');
-    const title = textOf(card, ['[class*="product-name"]', '[class*="title"]', 'h2', 'h3']);
-    const url   = link ? new URL(link.href, location.origin).href : null;
-    if (!title || !url) return null;
-    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
-  }).filter(Boolean);
+  const dom = cardsToProducts(cards, 'a[href*="/p/"], a[href*="/pd/"]');
+  return dom.length > ld.length ? dom : ld;
 }
 
 // ── Walmart ───────────────────────────────────────────────────────────────────
 function extractWalmart() {
   const ld = extractJsonLd();
-  if (ld.length > 0) return ld;
+  if (ld.length >= 5) return ld;
 
   const cards = findCards([
     '[data-item-id]',
@@ -91,25 +154,17 @@ function extractWalmart() {
     'div[data-testid*="product"]',
     '[class*="Grid-module"] > div',
   ]);
-  return cards.map(card => {
-    const link  = card.querySelector('a[href*="/ip/"]') || card.querySelector('a');
-    const title = textOf(card, ['[class*="product-title"]', '[data-automation-id="product-title"]', 'span[class*="line-clamp"]', 'h2', 'h3']);
-    const url   = link ? new URL(link.href, location.origin).href : null;
-    if (!title || !url) return null;
-    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
-  }).filter(Boolean);
+  const dom = cardsToProducts(cards, 'a[href*="/ip/"]');
+  return dom.length > ld.length ? dom : ld;
 }
 
-// ── Home Depot: Apollo cache primary (confirmed by HD API research), DOM fallback
-// HD is an Apollo/GraphQL app. Products live in window.__APOLLO_CLIENT__.cache
-// which is accessible from the page context (not the extension isolated world).
-// We inject a <script> to read it and relay via window.postMessage.
+// ── Home Depot: Apollo cache (reads all cached products at once) ──────────────
 async function extractHomeDepot() {
   const apollo = await readHdApolloCache();
-  if (apollo.length > 0) return apollo;
+  if (apollo.length >= 5) return apollo;
 
   const ld = extractJsonLd();
-  if (ld.length > 0) return ld;
+  if (ld.length >= 5) return ld;
 
   const cards = findCards([
     '[class*="plp-pod"]',
@@ -118,16 +173,10 @@ async function extractHomeDepot() {
     'li[data-productid]',
     'article',
   ]);
-  return cards.map(card => {
-    const link  = card.querySelector('a[href*="/p/"]') || card.querySelector('a');
-    const title = textOf(card, ['[class*="product-header"]', '[class*="product-title"]', '[class*="productHeader"]', 'h2', 'h3']);
-    const url   = link ? new URL(link.href, location.origin).href : null;
-    if (!title || !url) return null;
-    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
-  }).filter(Boolean);
+  const dom = cardsToProducts(cards, 'a[href*="/p/"]');
+  return dom.length > apollo.length ? dom : apollo;
 }
 
-// Injects into page context, reads Apollo cache, relays via postMessage
 function readHdApolloCache() {
   return new Promise(resolve => {
     const listener = event => {
@@ -136,7 +185,7 @@ function readHdApolloCache() {
       resolve(event.data.products || []);
     };
     window.addEventListener('message', listener);
-    setTimeout(() => { window.removeEventListener('message', listener); resolve([]); }, 1500);
+    setTimeout(() => { window.removeEventListener('message', listener); resolve([]); }, 2000);
 
     const script = document.createElement('script');
     script.textContent = `(function(){
@@ -189,6 +238,20 @@ function findCards(selectors) {
   return [];
 }
 
+function cardsToProducts(cards, linkSel) {
+  return cards.map(card => {
+    const link  = (linkSel && card.querySelector(linkSel)) || card.querySelector('a');
+    const title = textOf(card, ['[class*="description"]', '[class*="title"]', '[class*="name"]', '[class*="label"]', 'h2', 'h3', 'h4']);
+    const url   = link ? tryUrl(link.href) : null;
+    if (!title || !url) return null;
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
+  }).filter(Boolean);
+}
+
+function tryUrl(href) {
+  try { return new URL(href, location.origin).href; } catch { return null; }
+}
+
 function textOf(container, selectors) {
   for (const sel of selectors) {
     const el = container.querySelector(sel);
@@ -213,52 +276,30 @@ function priceOf(container) {
   return null;
 }
 
-// ── Retailer-specific next-page logic ─────────────────────────────────────────
+// ── Retailer-specific next-page URL (used for TSC/Walmart page navigation) ───
 
-function findNextPageUrl() {
+function buildNextPageUrl() {
   const retailer = getRetailer();
+  const url = new URL(location.href);
+  const p   = url.searchParams;
 
-  const nextEl = findNextElement(retailer);
-  if (nextEl) {
-    try {
-      const href = new URL(nextEl.href || nextEl.getAttribute('href'), location.origin).href;
-      if (href !== location.href) return href;
-    } catch {}
-  }
-
-  return buildNextPageUrl(retailer);
-}
-
-function findNextElement(retailer) {
+  // Try DOM next-link first
   const selMap = {
-    lowes: [
-      'a[aria-label="next page" i]',
-      'button[aria-label="next page" i]',
-      '[data-testid="pagination-next"] a',
-      '[class*="pagination"] a[class*="next" i]',
-    ],
-    tractorsupply: [
-      'a[aria-label*="next" i]',
-      '[class*="pagination"] a[class*="next" i]',
-      'li.next a',
-      'a[title="Next"]',
-    ],
-    walmart: [
-      'a[aria-label="Next Page"]',
-      'button[aria-label="Next Page"]',
-      '[class*="paginator"] a[class*="next" i]',
-    ],
-    homedepot: [
-      'a[aria-label="Next"]',
-      '[class*="hd-pagination"] a[aria-label*="next" i]',
-      '[class*="pagination"] a[class*="next" i]',
-    ],
+    tractorsupply: ['a[aria-label*="next" i]', '[class*="pagination"] a[class*="next" i]', 'li.next a', 'a[title="Next"]'],
+    walmart:       ['a[aria-label="Next Page"]', 'button[aria-label="Next Page"]', '[class*="paginator"] a[class*="next" i]'],
+    homedepot:     ['a[aria-label="Next"]', '[class*="hd-pagination"] a[aria-label*="next" i]', '[class*="pagination"] a[class*="next" i]'],
   };
   for (const sel of (selMap[retailer] || [])) {
     for (const el of document.querySelectorAll(sel)) {
-      if (!isDisabled(el) && (el.href || el.getAttribute('href'))) return el;
+      if (!isDisabled(el) && (el.href || el.getAttribute('href'))) {
+        try {
+          const href = new URL(el.href || el.getAttribute('href'), location.origin).href;
+          if (href !== location.href) return href;
+        } catch {}
+      }
     }
   }
+  // Generic Next text fallback
   for (const a of document.querySelectorAll('a[href]')) {
     if (isDisabled(a)) continue;
     const text  = a.textContent.trim();
@@ -266,39 +307,15 @@ function findNextElement(retailer) {
     if (text === 'Next' || text === '›' || text === '»' || label === 'next page') {
       try {
         const href = new URL(a.href, location.origin).href;
-        if (href !== location.href) return a;
+        if (href !== location.href) return href;
       } catch {}
     }
   }
-  return null;
-}
 
-function buildNextPageUrl(retailer) {
-  const url = new URL(location.href);
-  const p   = url.searchParams;
-
-  if (retailer === 'lowes') {
-    // Nao=N (offset) + Nrpp=N (page size) — confirmed by bookmarklet pagination tests
-    const step = parseInt(p.get('Nrpp') || '24', 10);
-    const nao  = parseInt(p.get('Nao')  || '0',  10);
-    p.set('Nao', String(nao + step));
-    return url.toString();
-  }
-  if (retailer === 'tractorsupply') {
-    p.set('page', String(parseInt(p.get('page') || '1', 10) + 1));
-    return url.toString();
-  }
-  if (retailer === 'walmart') {
-    p.set('page', String(parseInt(p.get('page') || '1', 10) + 1));
-    return url.toString();
-  }
-  if (retailer === 'homedepot') {
-    // HD GraphQL uses startIndex for pagination (from searchModel variables)
-    const step = 24;
-    const si   = parseInt(p.get('startIndex') || '0', 10);
-    p.set('startIndex', String(si + step));
-    return url.toString();
-  }
+  // URL construction fallback
+  if (retailer === 'tractorsupply') { p.set('page', String(parseInt(p.get('page') || '1', 10) + 1)); return url.toString(); }
+  if (retailer === 'walmart')       { p.set('page', String(parseInt(p.get('page') || '1', 10) + 1)); return url.toString(); }
+  if (retailer === 'homedepot')     { p.set('startIndex', String(parseInt(p.get('startIndex') || '0', 10) + 24)); return url.toString(); }
   return null;
 }
 
@@ -309,7 +326,7 @@ function isDisabled(el) {
     || !!el.closest('[aria-disabled="true"]');
 }
 
-// ── Main extract dispatcher (async to support HD's Apollo cache read) ─────────
+// ── Single-page extract dispatcher ───────────────────────────────────────────
 
 async function extractProducts() {
   const retailer = getRetailer();
@@ -321,32 +338,70 @@ async function extractProducts() {
   return { retailer, products };
 }
 
-// ── Auto-scan: follows pagination automatically ───────────────────────────────
+// ── Auto-scan ─────────────────────────────────────────────────────────────────
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function doScanStep(retailer) {
-  let { products } = await extractProducts();
+// sendProgress: sends a batch of products to the background buffer and returns
+// the result (for badge update). Used during multi-page fetch loops.
+async function sendBatch(products, retailer) {
+  if (!products.length) return;
+  return new Promise(resolve =>
+    chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, resolve)
+  );
+}
 
-  if (products.length === 0) {
-    await sleep(2500);
-    ({ products } = await extractProducts());
+// Lowe's all-pages scan: stays on current page, fetches all subsequent pages.
+// This matches exactly how the bookmarklet worked (v1.2.14-v1.2.15).
+async function doLowesAutoScan() {
+  const retailer = 'lowes';
+  await sleep(1000); // small grace period for page to stabilize
+
+  const allProducts = await extractLowesAllPages(async (batch) => {
+    await sendBatch(batch, retailer);
+  });
+
+  await chrome.storage.local.set({ autoScanning: false });
+  chrome.runtime.sendMessage({ type: 'AUTO_SCAN_COMPLETE' });
+}
+
+// HD all-pages scan: Apollo cache gets all products at once, no navigation needed.
+async function doHDAutoScan() {
+  const retailer = 'homedepot';
+  await sleep(1500);
+
+  const products = await extractHomeDepot();
+  if (products.length > 0) await sendBatch(products, retailer);
+
+  await chrome.storage.local.set({ autoScanning: false });
+  chrome.runtime.sendMessage({ type: 'AUTO_SCAN_COMPLETE' });
+}
+
+// TSC / Walmart: navigate page by page, polling for DOM products on each page.
+async function doPageNavAutoScan(retailer) {
+  await sleep(1500);
+
+  // Poll for products (handles slow JS renders — up to 10s per page)
+  const deadline = Date.now() + 10000;
+  let products = [];
+  while (Date.now() < deadline) {
+    const r = await extractProducts();
+    if (r.products.length > 0) { products = r.products; break; }
+    await sleep(600);
   }
 
-  // 0 products after retry = end of listing, stop scan
   if (products.length === 0) {
+    // Nothing on this page = end of listing
     await chrome.storage.local.set({ autoScanning: false });
     chrome.runtime.sendMessage({ type: 'AUTO_SCAN_COMPLETE' });
     return;
   }
 
-  await new Promise(resolve =>
-    chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, resolve)
-  );
+  await sendBatch(products, retailer);
 
-  const next = findNextPageUrl();
+  const next = buildNextPageUrl();
   if (next) {
-    await sleep(500);
+    await sleep(400);
     window.location.href = next;
   } else {
     await chrome.storage.local.set({ autoScanning: false });
@@ -360,8 +415,17 @@ async function doScanStep(retailer) {
   if (!autoScanning) return;
   const retailer = getRetailer();
   if (retailer === 'unknown') return;
-  await sleep(3500);
-  await doScanStep(retailer);
+
+  if (retailer === 'lowes') {
+    // Lowe's fetches all pages from here — no further navigation
+    await doLowesAutoScan();
+  } else if (retailer === 'homedepot') {
+    // HD reads Apollo cache — no navigation
+    await doHDAutoScan();
+  } else {
+    // TSC / Walmart — page-by-page navigation
+    await doPageNavAutoScan(retailer);
+  }
 })();
 
 // ── Message handler from popup ────────────────────────────────────────────────
@@ -373,9 +437,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'EXTRACT_AND_SEND') {
+    // Manual single-page scan
     extractProducts().then(({ retailer, products }) => {
       if (products.length === 0) {
-        sendResponse({ ok: false, error: 'No products found. Try scrolling down to load more items, then scan again.' });
+        sendResponse({ ok: false, error: 'No products found. Scroll down to load more items, then scan again.' });
         return;
       }
       chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, result => {
@@ -391,9 +456,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: 'Not a supported retailer page.' });
       return;
     }
-    doScanStep(retailer)
-      .then(() => sendResponse({ ok: true }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
+    // Respond immediately so popup doesn't time out waiting
+    sendResponse({ ok: true });
+
+    if (retailer === 'lowes') {
+      doLowesAutoScan().catch(console.error);
+    } else if (retailer === 'homedepot') {
+      doHDAutoScan().catch(console.error);
+    } else {
+      doPageNavAutoScan(retailer).catch(console.error);
+    }
   }
 });
