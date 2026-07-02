@@ -57,29 +57,23 @@ function extractJsonLd() { return extractJsonLdFromDoc(document); }
 // The extension content script does the same — stays on page 1 and fetches all
 // subsequent pages, parsing JSON-LD from each server-sent HTML response.
 async function extractLowesAllPages(sendProgress) {
+  // Mirrors the bookmarklet (v1.2.15) exactly:
+  // - Always fetch via HTTP from page 0 (Nao=0) so the correct server HTML is used
+  //   regardless of which page the user is currently viewing.
+  // - Deduplicate by SKU (id), same as bookmarklet's `if(p.sku && !seen[p.sku])`.
+  // - 450ms delay between pages to match bookmarklet timing.
   const seen = new Set();
   const all  = [];
 
-  function addProducts(prods) {
-    prods.forEach(p => {
-      const key = p.url || p.id;
-      if (key && !seen.has(key)) { seen.add(key); all.push(p); }
-    });
-  }
-
-  // Page 1: already in the DOM
-  addProducts(extractJsonLd());
-  if (all.length === 0) return [];   // Not on a Lowe's listing page
-
-  if (sendProgress) await sendProgress(all.slice(-all.length));
-
-  // Pages 2+: fetch server HTML, parse JSON-LD from each
+  // Build base URL with Nao stripped — set it fresh each fetch (same as bookmarklet template)
   const base = new URL(location.href);
+  base.searchParams.delete('Nao');
   const step = parseInt(base.searchParams.get('Nrpp') || '24', 10);
-  let nao = step;
 
-  for (let page = 1; page < 40; page++) {
-    base.searchParams.set('Nao', String(nao));
+  for (let page = 0; page < 40; page++) {
+    if (page > 0) await sleep(450); // polite delay before pages 2+ (bookmarklet uses 450ms)
+
+    base.searchParams.set('Nao', String(page * step));
     const html = await fetch(base.toString(), { credentials: 'include' })
       .then(r => r.text())
       .catch(() => null);
@@ -90,15 +84,15 @@ async function extractLowesAllPages(sendProgress) {
     const prods = extractJsonLdFromDoc(doc);
     if (prods.length === 0) break;
 
-    const before = all.length;
-    addProducts(prods);
-    const added = all.length - before;
-    if (added === 0) break; // All dupes — ran out of unique products
+    let added = 0;
+    prods.forEach(p => {
+      // Deduplicate by SKU, exactly like the bookmarklet
+      const key = p.id || p.url;
+      if (key && !seen.has(key)) { seen.add(key); all.push(p); added++; }
+    });
+    if (added === 0) break; // All dupes — end of unique products
 
     if (sendProgress) await sendProgress(all.slice(-added));
-
-    nao += step;
-    await sleep(450); // polite delay
   }
 
   return all;
@@ -355,8 +349,6 @@ async function sendBatch(products, retailer) {
 // This matches exactly how the bookmarklet worked (v1.2.14-v1.2.15).
 async function doLowesAutoScan() {
   const retailer = 'lowes';
-  await sleep(1000); // small grace period for page to stabilize
-
   const allProducts = await extractLowesAllPages(async (batch) => {
     await sendBatch(batch, retailer);
   });
