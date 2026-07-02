@@ -1,4 +1,4 @@
-const DEFAULT_UMBREL_URL = 'http://umbrel.local:3000';
+const DEFAULT_UMBREL_URL = 'http://umbrel.local:3001';
 
 async function getUmbrelUrl() {
   const { umbrelUrl } = await chrome.storage.local.get('umbrelUrl');

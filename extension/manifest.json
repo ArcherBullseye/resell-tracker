@@ -9,9 +9,9 @@
     "https://*.tractorsupply.com/*",
     "https://*.homedepot.com/*",
     "https://*.walmart.com/*",
-    "http://umbrel.local:3000/*",
-    "http://192.168.*.*:3000/*",
-    "http://10.*.*.*:3000/*"
+    "http://umbrel.local:3001/*",
+    "http://192.168.*.*:3001/*",
+    "http://10.*.*.*:3001/*"
   ],
   "action": {
     "default_popup": "popup.html",

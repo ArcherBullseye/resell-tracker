@@ -13,7 +13,7 @@ function setStatus(msg, type = 'info') {
 
 // Load saved Umbrel URL
 chrome.storage.local.get('umbrelUrl', ({ umbrelUrl }) => {
-  urlInput.value = umbrelUrl || 'http://umbrel.local:3000';
+  urlInput.value = umbrelUrl || 'http://umbrel.local:3001';
 });
 
 $('save-btn').addEventListener('click', () => {
