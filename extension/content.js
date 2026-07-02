@@ -7,8 +7,38 @@ function getRetailer() {
   return 'unknown';
 }
 
-// ── Lowe's extraction ─────────────────────────────────────────────────────────
+// ── JSON-LD parser — proven reliable on Lowe's via bookmarklet tests ──────────
+function extractJsonLd() {
+  const results = [];
+  document.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
+    try {
+      const j = JSON.parse(s.textContent);
+      const arr = Array.isArray(j) ? j : (j['@graph'] ? j['@graph'] : [j]);
+      arr.forEach(p => {
+        if (!p || p['@type'] !== 'Product') return;
+        const off  = Array.isArray(p.offers) ? p.offers[0] : p.offers;
+        const url  = (off && off.url) || p.url || '';
+        const name = p.name || '';
+        if (!name || !url) return;
+        results.push({
+          id: String(p.sku || ''),
+          name,
+          now_price: (off && off.price != null) ? Number(off.price) : null,
+          was_price: null,
+          url,
+          image: typeof p.image === 'string' ? p.image : (Array.isArray(p.image) ? p.image[0] : ''),
+        });
+      });
+    } catch(e) {}
+  });
+  return results;
+}
+
+// ── Lowe's: JSON-LD primary (proven by bookmarklet), DOM fallback ─────────────
 function extractLowes() {
+  const ld = extractJsonLd();
+  if (ld.length > 0) return ld;
+
   const cards = findCards([
     '[class*="ProductCard"]',
     '[data-testid*="product"]',
@@ -21,16 +51,17 @@ function extractLowes() {
   return cards.map(card => {
     const link  = card.querySelector('a[href*="/pd/"], a[href*="/p/"]') || card.querySelector('a');
     const title = textOf(card, ['[class*="description"]', '[class*="title"]', '[class*="name"]', 'h2', 'h3']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
     const url   = link ? new URL(link.href, location.origin).href : null;
     if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
   }).filter(Boolean);
 }
 
-// ── Tractor Supply extraction ─────────────────────────────────────────────────
+// ── Tractor Supply ────────────────────────────────────────────────────────────
 function extractTSC() {
+  const ld = extractJsonLd();
+  if (ld.length > 0) return ld;
+
   const cards = findCards([
     '[class*="product-card"]',
     '[class*="ProductCard"]',
@@ -42,16 +73,17 @@ function extractTSC() {
   return cards.map(card => {
     const link  = card.querySelector('a[href*="/p/"], a[href*="/pd/"]') || card.querySelector('a');
     const title = textOf(card, ['[class*="product-name"]', '[class*="title"]', 'h2', 'h3']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
     const url   = link ? new URL(link.href, location.origin).href : null;
     if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
   }).filter(Boolean);
 }
 
-// ── Walmart extraction ────────────────────────────────────────────────────────
+// ── Walmart ───────────────────────────────────────────────────────────────────
 function extractWalmart() {
+  const ld = extractJsonLd();
+  if (ld.length > 0) return ld;
+
   const cards = findCards([
     '[data-item-id]',
     '[data-testid="list-view"]',
@@ -62,31 +94,85 @@ function extractWalmart() {
   return cards.map(card => {
     const link  = card.querySelector('a[href*="/ip/"]') || card.querySelector('a');
     const title = textOf(card, ['[class*="product-title"]', '[data-automation-id="product-title"]', 'span[class*="line-clamp"]', 'h2', 'h3']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
     const url   = link ? new URL(link.href, location.origin).href : null;
     if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
   }).filter(Boolean);
 }
 
-// ── Home Depot extraction ─────────────────────────────────────────────────────
-function extractHomeDepot() {
+// ── Home Depot: Apollo cache primary (confirmed by HD API research), DOM fallback
+// HD is an Apollo/GraphQL app. Products live in window.__APOLLO_CLIENT__.cache
+// which is accessible from the page context (not the extension isolated world).
+// We inject a <script> to read it and relay via window.postMessage.
+async function extractHomeDepot() {
+  const apollo = await readHdApolloCache();
+  if (apollo.length > 0) return apollo;
+
+  const ld = extractJsonLd();
+  if (ld.length > 0) return ld;
+
   const cards = findCards([
     '[class*="plp-pod"]',
-    'div[data-testid*="product-pod"]',
+    '[data-testid*="pod"]',
     '[class*="product-pod"]',
-    'li[class*="plp-pod"]',
+    'li[data-productid]',
+    'article',
   ]);
   return cards.map(card => {
     const link  = card.querySelector('a[href*="/p/"]') || card.querySelector('a');
-    const title = textOf(card, ['[class*="product-header"]', 'h2', 'h3', 'span[class*="title"]']);
-    const price = priceOf(card);
-    const img   = (card.querySelector('img') || {}).src || null;
+    const title = textOf(card, ['[class*="product-header"]', '[class*="product-title"]', '[class*="productHeader"]', 'h2', 'h3']);
     const url   = link ? new URL(link.href, location.origin).href : null;
     if (!title || !url) return null;
-    return { id: null, name: title, now_price: price, was_price: null, url, image: img };
+    return { id: null, name: title, now_price: priceOf(card), was_price: null, url, image: (card.querySelector('img') || {}).src || null };
   }).filter(Boolean);
+}
+
+// Injects into page context, reads Apollo cache, relays via postMessage
+function readHdApolloCache() {
+  return new Promise(resolve => {
+    const listener = event => {
+      if (event.source !== window || event.data?.type !== 'HD_APOLLO_PRODUCTS') return;
+      window.removeEventListener('message', listener);
+      resolve(event.data.products || []);
+    };
+    window.addEventListener('message', listener);
+    setTimeout(() => { window.removeEventListener('message', listener); resolve([]); }, 1500);
+
+    const script = document.createElement('script');
+    script.textContent = `(function(){
+      try {
+        var cache = window.__APOLLO_CLIENT__ && window.__APOLLO_CLIENT__.cache.extract();
+        var products = [];
+        if (cache) {
+          Object.values(cache).forEach(function(item) {
+            if (!item || item.__typename !== 'Product') return;
+            var id = item.identifiers || {};
+            var pr = item.pricing || {};
+            var img = '';
+            if (item.media && item.media.images && item.media.images.length) {
+              img = (item.media.images[0].url || '').replace('<SIZE>', '600');
+            }
+            var url = id.canonicalUrl ? 'https://www.homedepot.com' + id.canonicalUrl : '';
+            var name = id.productLabel || '';
+            if (!name || !url) return;
+            products.push({
+              id: String(item.itemId || ''),
+              name: name,
+              now_price: pr.value != null ? Number(pr.value) : null,
+              was_price: pr.original != null ? Number(pr.original) : null,
+              url: url,
+              image: img
+            });
+          });
+        }
+        window.postMessage({ type: 'HD_APOLLO_PRODUCTS', products: products }, '*');
+      } catch(e) {
+        window.postMessage({ type: 'HD_APOLLO_PRODUCTS', products: [] }, '*');
+      }
+    })();`;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+  });
 }
 
 // ── Generic helpers ───────────────────────────────────────────────────────────
@@ -132,7 +218,6 @@ function priceOf(container) {
 function findNextPageUrl() {
   const retailer = getRetailer();
 
-  // 1. Retailer-specific DOM selectors
   const nextEl = findNextElement(retailer);
   if (nextEl) {
     try {
@@ -141,7 +226,6 @@ function findNextPageUrl() {
     } catch {}
   }
 
-  // 2. Retailer-specific URL construction
   return buildNextPageUrl(retailer);
 }
 
@@ -175,10 +259,9 @@ function findNextElement(retailer) {
       if (!isDisabled(el) && (el.href || el.getAttribute('href'))) return el;
     }
   }
-  // Generic text fallback
   for (const a of document.querySelectorAll('a[href]')) {
     if (isDisabled(a)) continue;
-    const text = a.textContent.trim();
+    const text  = a.textContent.trim();
     const label = (a.getAttribute('aria-label') || '').toLowerCase();
     if (text === 'Next' || text === '›' || text === '»' || label === 'next page') {
       try {
@@ -195,30 +278,25 @@ function buildNextPageUrl(retailer) {
   const p   = url.searchParams;
 
   if (retailer === 'lowes') {
-    // Lowe's uses ?offset=N&limit=24 (or similar)
-    const limit  = parseInt(p.get('limit')  || '24', 10);
-    const offset = parseInt(p.get('offset') || '0',  10);
-    p.set('offset', String(offset + limit));
-    p.set('limit', String(limit));
+    // Nao=N (offset) + Nrpp=N (page size) — confirmed by bookmarklet pagination tests
+    const step = parseInt(p.get('Nrpp') || '24', 10);
+    const nao  = parseInt(p.get('Nao')  || '0',  10);
+    p.set('Nao', String(nao + step));
     return url.toString();
   }
   if (retailer === 'tractorsupply') {
-    const page = parseInt(p.get('page') || '1', 10);
-    p.set('page', String(page + 1));
+    p.set('page', String(parseInt(p.get('page') || '1', 10) + 1));
     return url.toString();
   }
   if (retailer === 'walmart') {
-    const page = parseInt(p.get('page') || '1', 10);
-    p.set('page', String(page + 1));
+    p.set('page', String(parseInt(p.get('page') || '1', 10) + 1));
     return url.toString();
   }
   if (retailer === 'homedepot') {
-    // HD uses Nao=N (N = items offset, increments by 24)
-    const hash  = url.hash; // e.g. #Nao=24
-    const match = hash.match(/Nao=(\d+)/);
-    const nao   = match ? parseInt(match[1], 10) : 0;
-    url.hash = hash.replace(/Nao=\d+/, '') + (hash.includes('Nao=') ? '' : '') + `Nao=${nao + 24}`;
-    if (!hash.includes('Nao=')) url.hash = (hash || '#') + `&Nao=${nao + 24}`;
+    // HD GraphQL uses startIndex for pagination (from searchModel variables)
+    const step = 24;
+    const si   = parseInt(p.get('startIndex') || '0', 10);
+    p.set('startIndex', String(si + step));
     return url.toString();
   }
   return null;
@@ -231,15 +309,15 @@ function isDisabled(el) {
     || !!el.closest('[aria-disabled="true"]');
 }
 
-// ── Main extract dispatcher ───────────────────────────────────────────────────
+// ── Main extract dispatcher (async to support HD's Apollo cache read) ─────────
 
-function extractProducts() {
+async function extractProducts() {
   const retailer = getRetailer();
   let products = [];
   if      (retailer === 'lowes')          products = extractLowes();
   else if (retailer === 'tractorsupply')  products = extractTSC();
   else if (retailer === 'walmart')        products = extractWalmart();
-  else if (retailer === 'homedepot')      products = extractHomeDepot();
+  else if (retailer === 'homedepot')      products = await extractHomeDepot();
   return { retailer, products };
 }
 
@@ -248,19 +326,23 @@ function extractProducts() {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function doScanStep(retailer) {
-  let { products } = extractProducts();
+  let { products } = await extractProducts();
 
-  // If nothing found yet, wait and retry once — JS-heavy pages need extra time
   if (products.length === 0) {
     await sleep(2500);
-    ({ products } = extractProducts());
+    ({ products } = await extractProducts());
   }
 
-  if (products.length > 0) {
-    await new Promise(resolve =>
-      chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, resolve)
-    );
+  // 0 products after retry = end of listing, stop scan
+  if (products.length === 0) {
+    await chrome.storage.local.set({ autoScanning: false });
+    chrome.runtime.sendMessage({ type: 'AUTO_SCAN_COMPLETE' });
+    return;
   }
+
+  await new Promise(resolve =>
+    chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, resolve)
+  );
 
   const next = findNextPageUrl();
   if (next) {
@@ -278,7 +360,7 @@ async function doScanStep(retailer) {
   if (!autoScanning) return;
   const retailer = getRetailer();
   if (retailer === 'unknown') return;
-  await sleep(3500); // wait for JS-rendered product cards
+  await sleep(3500);
   await doScanStep(retailer);
 })();
 
@@ -291,20 +373,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'EXTRACT_AND_SEND') {
-    // Manual single-page scan
-    const { retailer, products } = extractProducts();
-    if (products.length === 0) {
-      sendResponse({ ok: false, error: 'No products found on this page. Try scrolling to load more, then scan again.' });
-      return;
-    }
-    chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, result => {
-      sendResponse(result || { ok: false, error: 'Background worker did not respond.' });
+    extractProducts().then(({ retailer, products }) => {
+      if (products.length === 0) {
+        sendResponse({ ok: false, error: 'No products found. Try scrolling down to load more items, then scan again.' });
+        return;
+      }
+      chrome.runtime.sendMessage({ type: 'SEND_PRODUCTS', products, retailer }, result => {
+        sendResponse(result || { ok: false, error: 'Background worker did not respond.' });
+      });
     });
     return true;
   }
 
   if (msg.type === 'START_AUTO_SCAN') {
-    // First page of auto-scan — popup triggers this
     const retailer = getRetailer();
     if (retailer === 'unknown') {
       sendResponse({ ok: false, error: 'Not a supported retailer page.' });
